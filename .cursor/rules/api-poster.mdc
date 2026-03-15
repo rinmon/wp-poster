@@ -1,0 +1,19 @@
+---
+description: api_poster 実行時は常に投稿予約モードで実行する
+globs: api_poster.py, drafts/**/*.md
+alwaysApply: false
+---
+
+# api_poster 投稿ルール
+
+api_poster.py で記事を投稿する際は、**常に投稿予約（公開予約）モード**で実行すること。
+
+## 必須遵守事項
+
+- **--draft フラグは使用しない**。ドラフト保存ではなく、投稿予約（status=future）で実行する。
+- 実行例: `python api_poster.py --site chotto --file 記事.md`（--draft は付けない）
+- デフォルトの挙動（_post_as_draft=False）が正。明示的に --draft を指定してはならない。
+- **元記事の画像を優先**：ユーザーが提供した記事の IMAGE_BLOCK に含まれる URL（画像・動画）はそのまま使用する。アクセス不可（404等）の場合のみ代替画像に差し替える。無断で Unsplash 等に置き換えない。
+- **Markdown表の自動変換**：ドラフト内の `| A | B |` 形式のMarkdown表は、api_poster の to_block_format により WordPress の表ブロック（wp:table）に自動変換される。表がテキスト化される問題は解消済み。
+
+記事投稿・更新の依頼を受けたら、投稿予約モードで api_poster を実行すること。

@@ -1,0 +1,23 @@
+---
+description: wp-poster のスクリプト・設定を変更したら GitHub に自動反映
+globs: "*.py,*.md,*.json.example,*.css,.gitignore"
+alwaysApply: false
+---
+
+# GitHub 同期ルール
+
+wp-poster の**スクリプト・設定・ドキュメント**を編集したら、変更を GitHub に反映すること。
+
+## 手順
+
+1. 変更内容を確認: `git status`
+2. コミット: `git add -A && git commit -m "変更内容を簡潔に"`
+3. プッシュ: `git push`
+
+## コミットしないもの
+
+.gitignore で除外済み: .env, sites.json, drafts/, processed/, assets/
+
+## リポジトリ
+
+https://github.com/rinmon/wp-poster

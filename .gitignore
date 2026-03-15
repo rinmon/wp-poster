@@ -22,5 +22,7 @@ assets/
 *.swp
 *.swo
 
-# Cursor
-.cursor/
+# Cursor（rulesは含める）
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
