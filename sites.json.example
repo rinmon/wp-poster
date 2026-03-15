@@ -1,4 +1,5 @@
 {
+  "_comment": "sites.json にコピーし、各サイトの app_pass を記入。sites.json は .gitignore で除外されます。",
   "_aliases": {
     "高島市": "takashima",
     "福山市": "fukuyama"
