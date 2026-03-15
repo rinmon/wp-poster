@@ -31,6 +31,11 @@ python api_poster.py --site chotto --update 58491 --file 記事.md
 - 本文: Markdown（IMAGE_BLOCK、表、見出し対応）
 - 末尾: `**タグ**` `**カテゴリ**` `**メタディスクリプション**`
 
+## GitHub
+
+- リポジトリ: [rinmon/wp-poster](https://github.com/rinmon/wp-poster)
+- 更新時: `git add -A && git commit -m "メッセージ" && git push`
+
 ## ライセンス
 
 Private / 個人利用
