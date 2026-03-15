@@ -1,0 +1,23 @@
+{
+  "_aliases": {
+    "高島市": "takashima",
+    "福山市": "fukuyama"
+  },
+  "chotto": {
+    "api_url": "https://example.com/wp-json/wp/v2",
+    "user": "your_username",
+    "app_pass": "xxxx xxxx xxxx xxxx xxxx xxxx"
+  },
+  "takashima": {
+    "api_url": "https://example.com/wp-json/wp/v2",
+    "user": "your_username",
+    "app_pass": "xxxx xxxx xxxx xxxx xxxx xxxx",
+    "category_map": {}
+  },
+  "fukuyama": {
+    "api_url": "https://example.com/wp-json/wp/v2",
+    "user": "your_username",
+    "app_pass": "xxxx xxxx xxxx xxxx xxxx xxxx",
+    "category_map": {}
+  }
+}

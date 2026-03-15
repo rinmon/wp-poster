@@ -1,0 +1,26 @@
+# 認証情報（絶対にコミットしない）
+.env
+sites.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.eggs/
+venv/
+.venv/
+
+# 記事コンテンツ・アセット（ローカル作業用）
+drafts/
+processed/
+assets/
+
+# エディタ・OS
+.DS_Store
+*.swp
+*.swo
+
+# Cursor
+.cursor/

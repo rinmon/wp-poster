@@ -1,0 +1,39 @@
+/**
+ * 表ブロック用カスタムスタイル
+ *
+ * 【導入方法】
+ * WordPress管理画面 → 外観 → カスタマイズ → 追加CSS にこのファイルの内容を貼り付けてください。
+ * または子テーマの style.css に @import するか、この内容をコピーしてください。
+ *
+ * 【適用対象】
+ * api_poster が出力する表ブロック（.wp-block-table.has-dark-header）
+ *
+ * 【スタイル内容】
+ * - ヘッダー: 濃いグレー背景（#374151）・白文字
+ * - 明細行: 奇数行は薄グレー（#f9fafb）、偶数行は白で縞模様
+ */
+
+/* ヘッダー：濃い背景・白文字 */
+.wp-block-table.has-dark-header thead th {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  border-color: #4b5563 !important;
+}
+
+/* 明細行：縞模様（奇数行） */
+.wp-block-table.has-dark-header.is-style-stripes tbody tr:nth-child(odd) td {
+  background-color: #f9fafb !important;
+}
+
+/* 明細行：縞模様（偶数行） */
+.wp-block-table.has-dark-header.is-style-stripes tbody tr:nth-child(even) td {
+  background-color: #ffffff !important;
+}
+
+/* セル境界の統一 */
+.wp-block-table.has-dark-header table th,
+.wp-block-table.has-dark-header table td {
+  border-color: #e5e7eb !important;
+  padding: 0.6em 0.8em;
+}
