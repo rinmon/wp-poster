@@ -96,56 +96,102 @@ DRAFTS_DIR = os.path.join(BASE_DIR, "drafts")
 PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
 SKIP_DIR = os.path.join(BASE_DIR, "drafts", "trash")  # ゴミ箱：ここにあるmdは処理しない
 
-# サイト別ドラフトフォルダ（drafts/fukuyama/ など）
+# サイト別ドラフトフォルダ（site_detection.json で上書き可能）
 SITE_SPECIFIC_DRAFTS = ("takashima", "fukuyama")
+DEFAULT_SITE = "chotto"
 
-# ----------------- サイト自動判定（CHOTTO / 福山 / 高島） -----------------
+def _load_site_detection_config():
+    """site_detection.json を読み込む。なければ None。"""
+    path = os.path.join(BASE_DIR, "site_detection.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def _get_site_detection_config():
+    """サイト自動判定の設定を返す。site_detection.json があればそれ、なければデフォルト。"""
+    cfg = _load_site_detection_config()
+    if cfg and "sites" in cfg:
+        return {
+            "default_site": cfg.get("_default_site", DEFAULT_SITE),
+            "site_specific_drafts": cfg.get("_site_specific_drafts", list(SITE_SPECIFIC_DRAFTS)),
+            "sites": cfg["sites"]
+        }
+    return None
+
+def _get_site_specific_drafts():
+    """サイト別ドラフトフォルダのリストを返す。"""
+    cfg = _get_site_detection_config()
+    if cfg:
+        return tuple(cfg["site_specific_drafts"])
+    return SITE_SPECIFIC_DRAFTS
+
+# ----------------- サイト自動判定（設定ファイルでカスタマイズ可能） -----------------
 def detect_site_from_content(title, content, tags_str, categories_str, filepath=""):
     """
     記事のタイトル・本文・タグ・ファイルパスから投稿先サイトを判定する。
-    戻り値: "takashima" | "fukuyama" | "chotto"
+    site_detection.json があればその設定を使用、なければ組み込みデフォルトを使用。
     """
-    combined = f"{title}\n{content}\n{tags_str}\n{categories_str}\n{filepath}".lower()
+    combined = f"{title}\n{content}\n{tags_str}\n{categories_str}\n{filepath}"
+    combined_lower = combined.lower()
+    basename = os.path.basename(filepath).lower() if filepath else ""
+
+    config = _get_site_detection_config()
+    if config:
+        scores = {}
+        for site_id, site_cfg in config["sites"].items():
+            score = 0
+            for kw, weight in site_cfg.get("keywords", []):
+                if kw in combined or kw.lower() in combined_lower:
+                    score += weight
+            for pat in site_cfg.get("filename_patterns", []):
+                if pat in basename or pat.lower() in basename:
+                    score += 3
+            scores[site_id] = score
+        if scores:
+            best = max(scores.items(), key=lambda x: x[1])
+            if best[1] > 0:
+                return best[0]
+        return config["default_site"]
+
+    # フォールバック: 組み込みデフォルト（従来の挙動）
     fukuyama_score = 0
     takashima_score = 0
-
-    # 福山市サイトのキーワード（広島県福山市・備後地域）
     fukuyama_keywords = [
-        "福山市", "福山駅", "福山アンバサダー", "田尻町", "鞆の浦", "芦田川",
-        "福山城", "備後", "福山ラーメン", "エクセル鞆の浦", "鞆鉄バス",
-        "福山シティfc", "fukuyama"
+        ("福山市", 2), ("福山駅", 2), ("田尻町", 2), ("鞆の浦", 2),
+        ("福山城", 1), ("備後", 1), ("福山アンバサダー", 1), ("芦田川", 1),
+        ("福山ラーメン", 1), ("エクセル鞆の浦", 1), ("鞆鉄バス", 1),
+        ("福山シティfc", 1), ("fukuyama", 1)
     ]
-    for kw in fukuyama_keywords:
-        if kw in combined:
-            fukuyama_score += 2 if kw in ("福山市", "福山駅", "田尻町", "鞆の浦") else 1
-
-    # 高島市サイトのキーワード（滋賀県高島市・湖北地域）
     takashima_keywords = [
-        "高島市", "高島", "大溝", "滋賀県立美術館", "近江高島", "湖北",
-        "湖西", "マキノ", "朽木", "琵琶湖", "askプロジェクト", "takashima"
+        ("高島市", 2), ("大溝", 2), ("滋賀県立美術館", 2), ("琵琶湖", 2),
+        ("高島", 1), ("近江高島", 1), ("湖北", 1), ("湖西", 1),
+        ("マキノ", 1), ("朽木", 1), ("askプロジェクト", 1), ("takashima", 1)
     ]
-    for kw in takashima_keywords:
-        if kw in combined:
-            takashima_score += 2 if kw in ("高島市", "大溝", "滋賀県立美術館", "琵琶湖") else 1
-
-    # ファイル名にサイト名が含まれる場合は強く反映
-    basename = os.path.basename(filepath).lower() if filepath else ""
+    for kw, weight in fukuyama_keywords:
+        if kw in combined or kw.lower() in combined_lower:
+            fukuyama_score += weight
+    for kw, weight in takashima_keywords:
+        if kw in combined or kw.lower() in combined_lower:
+            takashima_score += weight
     if "fukuyama" in basename or "福山" in basename:
         fukuyama_score += 3
     if "takashima" in basename or "高島" in basename:
         takashima_score += 3
-
     if fukuyama_score > takashima_score:
         return "fukuyama"
     if takashima_score > fukuyama_score:
         return "takashima"
-    return "chotto"
+    return DEFAULT_SITE
 
 def collect_draft_files_from_all_sites():
-    """全ドラフトフォルダ（drafts/, drafts/takashima/, drafts/fukuyama/）から処理対象ファイルを収集し、ソートして返す。"""
+    """全ドラフトフォルダ（drafts/, drafts/サイト名/）から処理対象ファイルを収集し、ソートして返す。"""
     all_files = []
     search_dirs = [DRAFTS_DIR]
-    for site in SITE_SPECIFIC_DRAFTS:
+    for site in _get_site_specific_drafts():
         d = os.path.join(BASE_DIR, "drafts", site)
         if os.path.isdir(d):
             search_dirs.append(d)
@@ -165,7 +211,7 @@ def find_target_file_auto_mode():
     """自動判定モード時：全フォルダから対象ファイルを探し、(filepath, drafts_dir) を返す。見つからなければ (None, None)。"""
     if _target_file:
         # --file 指定時：全フォルダを検索
-        for d in [DRAFTS_DIR] + [os.path.join(BASE_DIR, "drafts", s) for s in SITE_SPECIFIC_DRAFTS]:
+        for d in [DRAFTS_DIR] + [os.path.join(BASE_DIR, "drafts", s) for s in _get_site_specific_drafts()]:
             if os.path.isdir(d):
                 cand = os.path.normpath(os.path.join(d, _target_file))
                 if os.path.isfile(cand):
@@ -533,7 +579,7 @@ def main():
 
     if _site_explicit:
         drafts_dir = DRAFTS_DIR
-        if _resolved in SITE_SPECIFIC_DRAFTS:
+        if _resolved in _get_site_specific_drafts():
             site_drafts = os.path.join(BASE_DIR, "drafts", _resolved)
             if os.path.isdir(site_drafts):
                 drafts_dir = site_drafts

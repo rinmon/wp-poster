@@ -1,0 +1,42 @@
+{
+  "_comment": "site_detection.json にコピーして使用。記事内容からの投稿先自動判定に使います。site_detection.json は .gitignore で除外されます。",
+  "_default_site": "chotto",
+  "_site_specific_drafts": ["takashima", "fukuyama"],
+  "sites": {
+    "fukuyama": {
+      "keywords": [
+        ["福山市", 2],
+        ["福山駅", 2],
+        ["田尻町", 2],
+        ["鞆の浦", 2],
+        ["福山城", 1],
+        ["備後", 1],
+        ["福山アンバサダー", 1],
+        ["芦田川", 1],
+        ["福山ラーメン", 1],
+        ["エクセル鞆の浦", 1],
+        ["鞆鉄バス", 1],
+        ["福山シティfc", 1],
+        ["fukuyama", 1]
+      ],
+      "filename_patterns": ["fukuyama", "福山"]
+    },
+    "takashima": {
+      "keywords": [
+        ["高島市", 2],
+        ["大溝", 2],
+        ["滋賀県立美術館", 2],
+        ["琵琶湖", 2],
+        ["高島", 1],
+        ["近江高島", 1],
+        ["湖北", 1],
+        ["湖西", 1],
+        ["マキノ", 1],
+        ["朽木", 1],
+        ["askプロジェクト", 1],
+        ["takashima", 1]
+      ],
+      "filename_patterns": ["takashima", "高島"]
+    }
+  }
+}

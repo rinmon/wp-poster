@@ -1,6 +1,6 @@
 # wp-poster
 
-**v1.0.0**
+**v1.1.0**
 
 WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress REST API へ記事を予約投稿するツール群。[chotto.news](https://chotto.news/) 等の複数サイトに対応。
 
@@ -12,8 +12,8 @@ WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress 
 - **記事更新** … `--update POST_ID` で既存記事を上書き
 - **ドラフト保存** … `--draft` で公開せず下書きとして保存
 - **Markdown表の自動変換** … `| A | B |` 形式を WordPress 表ブロック（wp:table）に変換
-- **複数サイト対応** … chotto / 高島市 / 福山市 を記事内容から自動判定
-- **サイト別ドラフト** … `drafts/takashima/`、`drafts/fukuyama/` を `--site` 指定時に使用
+- **複数サイト対応** … 記事内容から投稿先を自動判定（`site_detection.json` でキーワード・サイトを設定可能）
+- **サイト別ドラフト** … `drafts/サイト名/` を `--site` 指定時に使用（設定で変更可）
 - **二重投稿防止** … 同一タイトルの記事が既にある場合はスキップ
 
 ### 画像・動画
@@ -40,8 +40,9 @@ WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress 
 
 ### 方法A: 複数サイト（推奨）
 
-1. `sites.json.example` を `sites.json` にコピー
-2. 各サイトの値を記入:
+1. `sites.json.example` を `sites.json` にコピーし、各サイトの API 認証を記入
+2. （任意）`site_detection.json.example` を `site_detection.json` にコピーし、記事内容からの自動判定キーワードをカスタマイズ。未設定の場合は組み込みデフォルトで動作
+3. 各サイトの値を記入:
 
 ```json
 {
@@ -116,6 +117,19 @@ URL: https://画像のURL
 - **\_aliases** … 「福山市」→「fukuyama」など日本語名で指定可能
 - **category_map** … カテゴリ名のマッピング（例: `"21.【歴史・文化財】"` → サイト固有の表記）
 
+### site_detection.json（記事内容からの自動判定）
+
+`site_detection.json.example` をコピーして `site_detection.json` を作成。GitHub にはサンプルのみ公開され、実設定は `.gitignore` で除外されます。
+
+| キー | 説明 |
+|------|------|
+| `_default_site` | キーワードに該当しない場合の投稿先 |
+| `_site_specific_drafts` | サイト別ドラフトフォルダ名のリスト（例: `["takashima", "fukuyama"]`） |
+| `sites.サイトID.keywords` | `[["キーワード", 重み], ...]` で記事内出現時にスコア加算 |
+| `sites.サイトID.filename_patterns` | ファイル名に含まれるとスコア+3 のパターン |
+
+サイトを追加・削除・変更する場合は `site_detection.json` を編集してください。
+
 ## セキュリティ（公開リポジトリにする場合）
 
 以下のファイルは `.gitignore` で除外されており、**コミットされません**:
@@ -124,8 +138,9 @@ URL: https://画像のURL
 |----------|------|
 | `.env` | WordPress API認証、SSH認証 |
 | `sites.json` | 各サイトの api_url, user, app_pass |
+| `site_detection.json` | 記事内容からの投稿先自動判定（キーワード・サイト一覧） |
 
-テンプレート（`sites.json.example`、`.env.example`）のみリポジトリに含まれます。クローン後に手動でコピー・記入すれば安全に利用できます。
+テンプレート（`sites.json.example`、`site_detection.json.example`、`.env.example`）のみリポジトリに含まれます。クローン後に手動でコピー・記入すれば安全に利用できます。
 
 ## GitHub
 

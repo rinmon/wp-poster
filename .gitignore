@@ -1,6 +1,7 @@
-# 認証情報（絶対にコミットしない）
+# 認証情報・設定（絶対にコミットしない）
 .env
 sites.json
+site_detection.json
 
 # Python
 __pycache__/
