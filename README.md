@@ -2,7 +2,7 @@
 
 **v1.1.0**
 
-WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress REST API へ記事を予約投稿するツール群。[chotto.news](https://chotto.news/) 等の複数サイトに対応。
+WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress REST API へ記事を予約投稿するツール群。複数のWordPressサイトに対応。
 
 ## 主な機能
 
