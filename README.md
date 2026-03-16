@@ -1,13 +1,38 @@
 # wp-poster
 
+**v1.0.0**
+
 WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress REST API へ記事を予約投稿するツール群。[chotto.news](https://chotto.news/) 等の複数サイトに対応。
 
 ## 主な機能
 
-- **api_poster.py** … ドラフト（Markdown）を WordPress に投稿予約
-- **Markdown表の自動変換** … `| A | B |` 形式を WordPress 表ブロックに変換
+### api_poster.py（コアスクリプト）
+
+- **投稿予約** … ドラフト（Markdown）を WordPress に予約投稿
+- **記事更新** … `--update POST_ID` で既存記事を上書き
+- **ドラフト保存** … `--draft` で公開せず下書きとして保存
+- **Markdown表の自動変換** … `| A | B |` 形式を WordPress 表ブロック（wp:table）に変換
 - **複数サイト対応** … chotto / 高島市 / 福山市 を記事内容から自動判定
-- **画像・動画** … IMAGE_BLOCK 形式、ローカル画像、URL に対応
+- **サイト別ドラフト** … `drafts/takashima/`、`drafts/fukuyama/` を `--site` 指定時に使用
+- **二重投稿防止** … 同一タイトルの記事が既にある場合はスキップ
+
+### 画像・動画
+
+- **IMAGE_BLOCK** … 説明・URL・出典を記載する専用形式（`![alt](url)` に自動変換）
+- **URL画像** … 外部URLからダウンロードして WordPress メディアにアップロード
+- **ローカル画像** … `drafts/` 内のファイルを `![alt](filename.jpg)` で参照
+- **動画** … mp4 / webm に対応（埋め込みブロックとして挿入）
+- **取得失敗時** … 画像URLが403/404等で取得できない場合は投稿を中止
+
+### その他スクリプト
+
+| スクリプト | 用途 |
+|------------|------|
+| `process_all_drafts.py` | drafts 内の全ドラフトを順次処理 |
+| `reschedule_posts.py` | 全サイトの予約投稿を1日10件以内に再調整 |
+| `list_duplicate_scheduled.py` | 予約重複を検出・表示 |
+| `check_server_health.py` | サーバー診断（SSH経由） |
+| `delete_post.py` | 指定IDの投稿を削除 |
 
 ## 認証情報の設定
 
@@ -44,18 +69,52 @@ WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress 
 ## 使い方
 
 ```bash
-# 今日の空き枠に投稿予約
+# 指定日の空き枠に投稿予約
 python api_poster.py --site chotto --date 2026-03-15 --file 記事.md
 
-# 既存記事を更新
+# 既存記事を更新（日付・ステータスは維持）
 python api_poster.py --site chotto --update 58491 --file 記事.md
+
+# ドラフトとして保存（予約しない）
+python api_poster.py --site chotto --draft --file 記事.md
+
+# サイト指定なし＝記事内容から自動判定
+python api_poster.py --file 記事.md
 ```
+
+### 引数
+
+| 引数 | 説明 |
+|------|------|
+| `--site` | 投稿先サイト（chotto / takashima / fukuyama またはエイリアス「福山市」等） |
+| `--date` | 予約日（YYYY-MM-DD）。その日の空き枠を優先 |
+| `--file` | 処理するドラフトファイル名 |
+| `--update` | 既存投稿ID。新規作成せず更新 |
+| `--draft` | 予約せずドラフト保存 |
 
 ## ドラフト形式
 
-- 1行目: タイトル
-- 本文: Markdown（IMAGE_BLOCK、表、見出し対応）
-- 末尾: `**タグ**` `**カテゴリ**` `**メタディスクリプション**`
+- **1行目**: タイトル（`# ` で始めても自動除去）
+- **本文**: Markdown（IMAGE_BLOCK、`![alt](url)`、表、見出し対応）
+- **末尾**: `**タグ**` → `**カテゴリ**` → `**メタディスクリプション**`
+
+### IMAGE_BLOCK 形式
+
+```
+[IMAGE_BLOCK]
+説明: altテキスト（120文字程度）
+URL: https://画像のURL
+出典名: 出典元
+出典URL: https://元投稿のURL
+[/IMAGE_BLOCK]
+```
+
+内部で `![説明](URL)` に変換され、URLからダウンロード→WordPressメディアにアップロードされます。
+
+### sites.json の拡張
+
+- **\_aliases** … 「福山市」→「fukuyama」など日本語名で指定可能
+- **category_map** … カテゴリ名のマッピング（例: `"21.【歴史・文化財】"` → サイト固有の表記）
 
 ## セキュリティ（公開リポジトリにする場合）
 
@@ -71,7 +130,9 @@ python api_poster.py --site chotto --update 58491 --file 記事.md
 ## GitHub
 
 - リポジトリ: [rinmon/wp-poster](https://github.com/rinmon/wp-poster)
+- バージョン: `VERSION` ファイルで管理（Semantic Versioning）
 - 更新時: `git add -A && git commit -m "メッセージ" && git push`
+- タグ付きリリース: `git tag v1.0.0 && git push origin v1.0.0`
 
 ## ライセンス
 
