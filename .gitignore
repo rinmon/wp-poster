@@ -1,7 +1,15 @@
 # 認証情報・設定（絶対にコミットしない）
 .env
+.env.*
+!.env.example
 sites.json
 site_detection.json
+
+# 秘密・手渡し用メモ（himitsu を含むファイル名は除外）
+*himitsu*
+秘密.txt
+秘密.md
+CHOTTO_ACCESS_HANDOFF.md
 
 # Python
 __pycache__/

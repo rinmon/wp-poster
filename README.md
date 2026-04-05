@@ -1,6 +1,6 @@
 # wp-poster
 
-**v1.1.0**
+**v1.2.0**
 
 WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress REST API へ記事を予約投稿するツール群。複数のWordPressサイトに対応。
 
@@ -88,7 +88,7 @@ python api_poster.py --file 記事.md
 | 引数 | 説明 |
 |------|------|
 | `--site` | 投稿先サイト（chotto / takashima / fukuyama またはエイリアス「福山市」等） |
-| `--date` | 予約日（YYYY-MM-DD）。その日の空き枠を優先 |
+| `--date` | 予約日（YYYY-MM-DD）。※空き枠は常に今日から検索し、最も早い枠を優先 |
 | `--file` | 処理するドラフトファイル名 |
 | `--update` | 既存投稿ID。新規作成せず更新 |
 | `--draft` | 予約せずドラフト保存 |

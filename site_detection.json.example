@@ -1,11 +1,11 @@
 {
-  "_comment": "site_detection.json にコピーして使用。記事内容からの投稿先自動判定に使います。site_detection.json は .gitignore で除外されます。",
+  "_comment": "リポジトリ用テンプレート。手元では site_detection.json にコピーして編集（site_detection.json は .gitignore）。記事内容から投稿先を自動判定する。",
   "_default_site": "chotto",
   "_site_specific_drafts": ["takashima", "fukuyama"],
   "sites": {
     "fukuyama": {
       "keywords": [
-        ["福山市", 2],
+        ["福山市", 3],
         ["福山駅", 2],
         ["田尻町", 2],
         ["鞆の浦", 2],
@@ -17,26 +17,37 @@
         ["エクセル鞆の浦", 1],
         ["鞆鉄バス", 1],
         ["福山シティfc", 1],
-        ["fukuyama", 1]
+        ["fukuyama", 2],
+        ["福山市役所", 2]
       ],
       "filename_patterns": ["fukuyama", "福山"]
     },
     "takashima": {
       "keywords": [
-        ["高島市", 2],
+        ["高島市", 4],
+        ["city.takashima.lg.jp", 4],
+        ["滋賀県高島", 3],
+        ["長期財政", 2],
+        ["地方交付税", 2],
+        ["財政調整基金", 2],
+        ["たかしま", 2],
         ["大溝", 2],
         ["滋賀県立美術館", 2],
         ["琵琶湖", 2],
-        ["高島", 1],
-        ["近江高島", 1],
+        ["高島", 2],
+        ["近江高島", 2],
         ["湖北", 1],
         ["湖西", 1],
-        ["マキノ", 1],
+        ["マキノ", 2],
+        ["今津", 2],
+        ["安曇川", 2],
+        ["新旭", 2],
         ["朽木", 1],
         ["askプロジェクト", 1],
-        ["takashima", 1]
+        ["takashima", 3],
+        ["虹のまち", 2]
       ],
-      "filename_patterns": ["takashima", "高島"]
+      "filename_patterns": ["takashima", "高島", "takashima_"]
     }
   }
 }

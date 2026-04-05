@@ -14,6 +14,37 @@ import shutil
 # ----------------- 設定 -----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+
+def _normalize_title_from_first_line(line):
+    """1行目からタイトルを取得（BOM除去・Markdown H1対応）。"""
+    t = (line or "").strip()
+    if t.startswith("\ufeff"):
+        t = t.lstrip("\ufeff").strip()
+    if t.startswith("# "):
+        t = t[2:].strip()
+    return t
+
+
+def _rest_api_title_field(title_str):
+    """WordPress REST API が post_title に確実に保存するよう raw オブジェクト形式で送る。"""
+    return {"raw": title_str}
+
+
+def _prepend_title_h1_block(block_html, title_str):
+    """テーマが the_title を表示しない場合のフォールバックとして本文先頭に H1 を付与する。"""
+    esc = html.escape(title_str)
+    return (
+        f'<!-- wp:heading {{"level":1}} -->\n'
+        f'<h1 class="wp-block-heading api-poster-inline-title">{esc}</h1>\n'
+        f'<!-- /wp:heading -->\n\n'
+        + block_html
+    )
+
+
+def _should_prepend_title_h1():
+    v = os.environ.get("API_POSTER_PREPEND_TITLE_H1", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
 # --site / --date / --draft 引数の解析（例: python api_poster.py --site takashima --date 2026-03-04）
 _site_name = "chotto"  # デフォルト
 _site_explicit = False  # --site が明示指定されたか（False なら記事内容から自動判定）
@@ -417,41 +448,6 @@ def api_request(endpoint, method="GET", data=None, headers=None, is_media=False)
         print(f"Error on {url}: {e}", file=sys.stderr)
         return None
 
-# ----------------- 予約投稿の重複チェック・削除 -----------------
-def check_and_remove_duplicate_scheduled():
-    """予約投稿の重複を検出し、古い方を削除する（日付が早い＝先に予約した方を残す）"""
-    all_posts = []
-    page = 1
-    while True:
-        posts = api_request(f"posts?status=future&per_page=100&page={page}&_fields=id,title,date")
-        if not posts:
-            break
-        all_posts.extend(posts)
-        if len(posts) < 100:
-            break
-        page += 1
-    if not all_posts:
-        return
-    by_title = {}
-    for p in all_posts:
-        title_obj = p.get("title") or {}
-        title = title_obj.get("raw") or title_obj.get("rendered", "").replace("&#8211;", "–")
-        if title not in by_title:
-            by_title[title] = []
-        by_title[title].append(p)
-    deleted = []
-    for title, plist in by_title.items():
-        if len(plist) <= 1:
-            continue
-        # 日付でソート、先頭（最も早い予約）を残し、他を削除
-        sorted_posts = sorted(plist, key=lambda x: x.get("date", ""))
-        for p in sorted_posts[1:]:
-            pid = p.get("id")
-            if api_request(f"posts/{pid}?force=true", method="DELETE") is not None:
-                deleted.append(pid)
-                print(f"  🗑  重複削除: Post ID {pid} ({title[:40]}...)")
-    if deleted:
-        print(f"✅ 予約重複 {len(deleted)} 件を削除しました。\n")
 
 # ----------------- タクソノミー（タグ・カテゴリ）処理 -----------------
 # 高島市・福山市はカテゴリを新規作成せず既存のみ使用
@@ -555,7 +551,16 @@ def _safe_move(src, dst, label=""):
 def post_exists_with_title(title):
     """WordPressに同一タイトルの記事が既にあるか（publish/future/draft/private）"""
     encoded = urllib.parse.quote(title)
-    # status=publish,future,draft,private で既存記事を検索（trash除く）
+    
+    # 1. まず高速なカスタムAPIを試す (デプロイされていない場合は404等でNoneが返る)
+    custom_endpoint = f"custom/v1/check-title?title={encoded}"
+    res = api_request(custom_endpoint)
+    if isinstance(res, dict) and "exists" in res:
+        if res["exists"]:
+            return res.get("id")
+        return None  # カスタムAPIで「存在しない」と確認できた
+        
+    # 2. フォールバック: カスタムAPIが使えない場合は従来の標準API（全文検索仕様のため遅い）で検索
     posts = api_request(f"posts?search={encoded}&status=publish,future,draft,private&per_page=50&_fields=title,id,status")
     if not posts:
         return None
@@ -599,10 +604,7 @@ def main():
         if not lines:
             print("❌ ファイルが空です。")
             return
-        title = lines[0].strip()
-        # Markdown H1形式（# で始まる）の場合は # を除去
-        if title.startswith("# "):
-            title = title[2:].strip()
+        title = _normalize_title_from_first_line(lines[0])
         content_lines = []
         tags_str = ""
         categories_str = ""
@@ -686,10 +688,7 @@ def main():
         print("❌ ファイルが空です。")
         return
         
-    title = lines[0].strip()
-    # Markdown H1形式（# で始まる）の場合は # を除去
-    if title.startswith("# "):
-        title = title[2:].strip()
+    title = _normalize_title_from_first_line(lines[0])
     content_lines = []
     tags_str = ""
     categories_str = ""
@@ -948,17 +947,19 @@ def main():
             
         now = datetime.now()
         # 予約枠：1日18件（6時〜23時、1時間毎）
+        # 基本は「今日」から検索し、利用可能な最も早い枠を優先
         fallback_slots = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
         if _target_date:
             try:
-                check_date = datetime.strptime(_target_date, "%Y-%m-%d").replace(hour=0, minute=0, second=0, microsecond=0)
-                day_range = 1  # 指定日のみ
-            except ValueError:
+                y, m, d = [int(x) for x in _target_date.strip().split("-")]
+                check_date = datetime(y, m, d, 0, 0, 0)
+                print(f"  📅 --date 指定: {check_date.date()} から空き枠を優先検索")
+            except (ValueError, IndexError):
                 check_date = now.replace(minute=0, second=0, microsecond=0)
-                day_range = 30
+                print(f"  ⚠ --date 解釈失敗（{_target_date}）、現在時刻を基準にします。", file=sys.stderr)
         else:
             check_date = now.replace(minute=0, second=0, microsecond=0)
-            day_range = 30
+        day_range = 30
         
         for day_offset in range(day_range):
             current_day = check_date + timedelta(days=day_offset)
@@ -978,11 +979,12 @@ def main():
             
         print(f"✅ 次の空き枠: {scheduled_date.replace('T', ' ')}")
     
-    # 6.5. 二重投稿防止：WordPressに同一タイトルが既にあるか確認（更新時は自投稿を除外）
+    # 6.5. 二重投稿防止：同一タイトル（完全一致）の投稿が既にあるか確認。本文・抜粋の内容照合は行わない。更新時はスキップしない。
     if not _update_post_id:
         existing_id = post_exists_with_title(title)
         if existing_id:
             print(f"\n⚠️  二重投稿防止: 同一タイトルの記事が既に存在します (Post ID: {existing_id})")
+            print(f"    対象タイトル: {title}")
             print(f"    スキップし、ファイルをprocessedへ移動します。")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             processed_text = os.path.join(PROCESSED_DIR, f"{timestamp}_SKIP_DUP_{os.path.basename(text_file)}")
@@ -991,20 +993,24 @@ def main():
     
     # 6.9. 本文をWordPressブロック形式（Gutenberg）に変換
     content = to_block_format(content)
-    
+    if title and _should_prepend_title_h1():
+        content = _prepend_title_h1_block(content, title)
+        print("  ℹ 本文先頭に H1 タイトルを挿入しました（テーマと二重になる場合は API_POSTER_PREPEND_TITLE_H1=0）")
+
     # 7. 記事の投稿（または更新）
     if _update_post_id:
         print("\n⏳ 既存記事を更新中...")
         post_data = {
-            "title": title,
+            "title": _rest_api_title_field(title),
             "content": content,
             "categories": cat_ids,
             "tags": tag_ids
         }
         if scheduled_date:
             post_data["date"] = scheduled_date
-            # 既存のstatusを維持（future=予約済み / publish=公開済み）
-            post_data["status"] = (existing_post or {}).get("status", "future")
+        # 日付取得に失敗しても status だけは必ず送る（未指定だと公開扱いになるのを防ぐ）
+        if existing_post and existing_post.get("status"):
+            post_data["status"] = existing_post["status"]
         if excerpt_str:
             post_data["excerpt"] = excerpt_str
         if featured_media_id:
@@ -1013,7 +1019,7 @@ def main():
     elif _post_as_draft:
         print("\n⏳ 記事をドラフト保存中...")
         post_data = {
-            "title": title,
+            "title": _rest_api_title_field(title),
             "content": content,
             "status": "draft",
             "categories": cat_ids,
@@ -1027,7 +1033,7 @@ def main():
     else:
         print("\n⏳ 記事を予約投稿中...")
         post_data = {
-            "title": title,
+            "title": _rest_api_title_field(title),
             "content": content,
             "status": "future",
             "date": scheduled_date,
@@ -1042,6 +1048,19 @@ def main():
     
     if post_res and 'id' in post_res:
         post_id = post_res['id']
+        # タイトルが空で返ってきた場合は raw 形式で再送（プラグイン・REST の組み合わせ対策）
+        _tobj = post_res.get("title") or {}
+        _saved_title = (_tobj.get("raw") or "").strip()
+        if not _saved_title and title:
+            _rend = _tobj.get("rendered") or ""
+            if _rend:
+                _saved_title = re.sub(r"<[^>]+>", "", _rend).strip()
+        if title and not _saved_title:
+            _fix = api_request(f"posts/{post_id}", method="POST", data={"title": _rest_api_title_field(title)})
+            if _fix and (_fix.get("title") or {}).get("raw"):
+                print(f"  ✓ タイトルが空だったため再設定しました。")
+            else:
+                print(f"  ⚠ タイトルの再設定に失敗しました。管理画面で確認してください。", file=sys.stderr)
         # アイキャッチは別リクエストで確実に設定（初回POSTで反映されないケース対策）
         if featured_media_id:
             patch_res = api_request(f"posts/{post_id}", method="POST", data={"featured_media": featured_media_id})
@@ -1057,10 +1076,24 @@ def main():
             print(f"\n🎉 成功！ 記事がドラフト保存されました。")
         else:
             print(f"\n🎉 成功！ 記事が予約されました。")
+        print(f"タイトル:   {title}")
         print(f"Post ID:   {post_res['id']}")
         if not _post_as_draft and post_res.get('date'):
             print(f"Schedule:  {post_res['date'].replace('T', ' ')}")
         print(f"Status:    {post_res['status']}")
+        # 要約・ログでタイトルが落ちないよう、末尾に再掲（エージェント報告用）
+        _sched = ""
+        if not _post_as_draft and post_res.get('date'):
+            _sched = post_res["date"].replace("T", " ")
+        print()
+        print("=" * 62)
+        print("📌 投稿サマリー（タイトル必ずここに表示）")
+        print(f"   タイトル: {title}")
+        print(f"   Post ID: {post_res['id']}")
+        if _sched:
+            print(f"   予約日時: {_sched}")
+        print(f"   ステータス: {post_res['status']}")
+        print("=" * 62)
         
         # 8. 成功したらファイルをprocessedへ移動（_safe_moveでSynology同期時の失敗に耐える）
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
