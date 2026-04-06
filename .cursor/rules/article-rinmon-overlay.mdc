@@ -27,6 +27,7 @@ alwaysApply: false
 
 ## 画像（既存ルールの強化）
 
+- **最低枚数**は `article_creation_guidelines.md` に従い、**アイキャッチ1枚＋本文最低3枚（計4枚）**。
 - **本文で主要事実として引用する X 投稿がある場合**、その投稿に付いたメディア URL（`pbs.twimg.com` 等）を**最優先**。無い場合のみ、公式プレス・公式サイト・主要メディア公式アカウントから補完。
 - Wikimedia Commons 禁止、実在 URL の事前確認、**[IMAGE_BLOCK] 専用形式**は変更なし。
 

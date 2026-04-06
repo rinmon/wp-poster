@@ -989,6 +989,10 @@ def main():
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             processed_text = os.path.join(PROCESSED_DIR, f"{timestamp}_SKIP_DUP_{os.path.basename(text_file)}")
             _safe_move(text_file, processed_text, "テキスト（重複のためスキップ）")
+            print()
+            print("=" * 62)
+            print(f"📰 記事タイトル: {title}")
+            print("=" * 62)
             return
     
     # 6.9. 本文をWordPressブロック形式（Gutenberg）に変換
@@ -1124,6 +1128,10 @@ def main():
 """
         with open(os.path.join(DRAFTS_DIR, 'README_drafts.md'), 'w', encoding='utf-8') as f:
             f.write(readme_content)
+        print()
+        print("=" * 62)
+        print(f"📰 記事タイトル: {title}")
+        print("=" * 62)
     else:
         if _update_post_id:
             print("\n❌ 記事の更新に失敗しました。")
