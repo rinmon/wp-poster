@@ -1,9 +1,11 @@
 import html
 import json
 import base64
+import re
+import unicodedata
 import urllib.request
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import ssl
 import sys
 import os
@@ -25,9 +27,52 @@ def _normalize_title_from_first_line(line):
     return t
 
 
+def _normalize_title_for_duplicate(s):
+    """全角半角・連続空白を正規化し、二重投稿判定の同一タイトル比較に使う。"""
+    if not s:
+        return ""
+    t = unicodedata.normalize("NFKC", str(s).strip())
+    return " ".join(t.split())
+
+
+def _wp_title_plain(p):
+    """REST API の投稿オブジェクトからタイトル文字列を取り出す（rendered の HTML を除去）。"""
+    obj = p.get("title") or {}
+    raw = (obj.get("raw") or "").strip()
+    if raw:
+        return raw
+    rend = obj.get("rendered") or ""
+    rend = re.sub(r"<[^>]+>", "", rend)
+    return html.unescape(rend).strip()
+
+
 def _rest_api_title_field(title_str):
     """WordPress REST API が post_title に確実に保存するよう raw オブジェクト形式で送る。"""
     return {"raw": title_str}
+
+
+# WordPress の site timezone が JST である前提で、予約枠の重複判定用キーに正規化する
+_JST = timezone(timedelta(hours=9))
+
+
+def _schedule_slot_key_from_wp_date(dt_str):
+    """
+    REST の posts[].date（ISO 風）を、日本時間・分秒切り捨ての枠キーに変換する。
+    UTC（...Z）とローカル無印の両方に対応し、文字列の表記ゆれによる重複取りこぼしを減らす。
+    """
+    if not dt_str or not isinstance(dt_str, str):
+        return None
+    s = dt_str.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(_JST).replace(tzinfo=None)
+    dt = dt.replace(minute=0, second=0, microsecond=0)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _prepend_title_h1_block(block_html, title_str):
@@ -42,8 +87,9 @@ def _prepend_title_h1_block(block_html, title_str):
 
 
 def _should_prepend_title_h1():
-    v = os.environ.get("API_POSTER_PREPEND_TITLE_H1", "1").strip().lower()
-    return v not in ("0", "false", "no", "off")
+    """既定はオフ。テーマが the_title を出さない場合のみ API_POSTER_PREPEND_TITLE_H1=1 を付与。"""
+    v = os.environ.get("API_POSTER_PREPEND_TITLE_H1", "0").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
 # --site / --date / --draft 引数の解析（例: python api_poster.py --site takashima --date 2026-03-04）
 _site_name = "chotto"  # デフォルト
@@ -52,6 +98,7 @@ _target_date = None  # YYYY-MM-DD 指定時はその日の空き枠を優先
 _post_as_draft = False  # True: ドラフト保存 / False: 投稿予約（デフォルト）
 _target_file = None  # 指定時はそのファイルのみ処理
 _update_post_id = None  # 指定時はその投稿を更新（新規作成しない）
+_schedule_hour = None  # --hour と併用: 指定日（または当日）のその時刻で予約（空き・未来のみ）
 for i, arg in enumerate(sys.argv[1:], 1):
     if arg == "--update" and i + 1 <= len(sys.argv) - 1:
         try:
@@ -70,6 +117,15 @@ for i, arg in enumerate(sys.argv[1:], 1):
 for i, arg in enumerate(sys.argv[1:], 1):
     if arg == "--file" and i + 1 <= len(sys.argv) - 1:
         _target_file = sys.argv[i + 1]
+        break
+for i, arg in enumerate(sys.argv[1:], 1):
+    if arg == "--hour" and i + 1 <= len(sys.argv) - 1:
+        try:
+            h = int(sys.argv[i + 1])
+            if 0 <= h <= 23:
+                _schedule_hour = h
+        except ValueError:
+            pass
         break
 if "--draft" in sys.argv:
     _post_as_draft = True
@@ -247,7 +303,8 @@ def find_target_file_auto_mode():
                 cand = os.path.normpath(os.path.join(d, _target_file))
                 if os.path.isfile(cand):
                     base_no_ext = os.path.splitext(os.path.basename(cand))[0]
-                    if glob.glob(os.path.join(PROCESSED_DIR, f"*_{base_no_ext}.md")):
+                    # 既に processed 済みでも --update なら編集再投稿を許可
+                    if glob.glob(os.path.join(PROCESSED_DIR, f"*_{base_no_ext}.md")) and not _update_post_id:
                         return None, None
                     return cand, d
         return None, None
@@ -295,6 +352,10 @@ def to_block_format(content):
     for raw in raw_blocks:
         raw = raw.strip()
         if not raw:
+            continue
+        # 0. Gutenberg 生ブロック（<!-- wp:... --> で始まる）— 段落ラップせずそのまま連結（wp:html / wp:buttons 等）
+        if raw.startswith("<!-- wp:"):
+            blocks.append(raw)
             continue
         # 0. auto-gallery 内の figure を個別ブロックに（先に処理）
         if "auto-gallery" in raw:
@@ -549,27 +610,95 @@ def _safe_move(src, dst, label=""):
             print(f"⚠️  代替移動も失敗: {e2}", file=sys.stderr)
 
 def post_exists_with_title(title):
-    """WordPressに同一タイトルの記事が既にあるか（publish/future/draft/private）"""
-    encoded = urllib.parse.quote(title)
-    
-    # 1. まず高速なカスタムAPIを試す (デプロイされていない場合は404等でNoneが返る)
+    """WordPressに同一タイトル（正規化一致）の記事が既にあるか（publish/future/draft/private）。"""
+    want = _normalize_title_for_duplicate(title)
+    if not want:
+        return None
+    encoded = urllib.parse.quote(title.strip())
+
+    # 1. 高速なカスタムAPI（SQL 完全一致。Unicode の揺れは下のフォールバックで拾う）
     custom_endpoint = f"custom/v1/check-title?title={encoded}"
     res = api_request(custom_endpoint)
     if isinstance(res, dict) and "exists" in res:
         if res["exists"]:
             return res.get("id")
-        return None  # カスタムAPIで「存在しない」と確認できた
-        
-    # 2. フォールバック: カスタムAPIが使えない場合は従来の標準API（全文検索仕様のため遅い）で検索
-    posts = api_request(f"posts?search={encoded}&status=publish,future,draft,private&per_page=50&_fields=title,id,status")
-    if not posts:
-        return None
-    for p in posts:
-        t = p.get("title") or {}
-        raw_title = t.get("raw") or t.get("rendered", "")
-        if raw_title == title:
-            return p.get("id")
+        # exists: false でも DB 側が別表記の可能性があるためフォールバックへ進む
+
+    # 2. フォールバック: 標準API search＋正規化一致（ページング）
+    q = title.strip()
+    search_terms = [q[: min(80, len(q))] if len(q) > 80 else q]
+    if len(q) > 12:
+        search_terms.append(q[:40])
+    seen_pages = set()
+    for term in search_terms:
+        if len(term.strip()) < 4:
+            continue
+        enc = urllib.parse.quote(term.strip())
+        for page in range(1, 6):
+            key = (enc, page)
+            if key in seen_pages:
+                continue
+            seen_pages.add(key)
+            posts = api_request(
+                f"posts?search={enc}&status=publish,future,draft,private&per_page=50&page={page}&_fields=title,id,status"
+            )
+            if not posts:
+                break
+            for p in posts:
+                plain = _wp_title_plain(p)
+                if _normalize_title_for_duplicate(plain) == want:
+                    return p.get("id")
+            if len(posts) < 50:
+                break
     return None
+
+
+def find_local_duplicate_title(title, exclude_path):
+    """
+    drafts / processed / サイト別ドラフト内の .md を走査し、
+    1行目タイトルが正規化一致する別ファイルがあればそのパスを返す。
+    """
+    want = _normalize_title_for_duplicate(title)
+    if not want:
+        return None
+    exclude_abs = os.path.abspath(exclude_path) if exclude_path else ""
+    dirs = [DRAFTS_DIR, PROCESSED_DIR]
+    for name in _get_site_specific_drafts():
+        dirs.append(os.path.join(BASE_DIR, "drafts", name))
+    for folder in dirs:
+        if not os.path.isdir(folder):
+            continue
+        for path in glob.glob(os.path.join(folder, "*.md")):
+            if os.path.abspath(path) == exclude_abs:
+                continue
+            bn = os.path.basename(path).upper()
+            if bn == "README_DRAFTS.MD" or bn.startswith("."):
+                continue
+            try:
+                with open(path, encoding="utf-8", errors="ignore") as f:
+                    first = f.readline()
+                other = _normalize_title_from_first_line(first)
+                if _normalize_title_for_duplicate(other) == want:
+                    return path
+            except OSError:
+                continue
+    return None
+
+
+def skip_duplicate_draft(text_file, title, reason, detail=""):
+    """二重投稿と判断したときにログ出力し、ドラフトを processed に移動して終了。"""
+    print(f"\n⚠️  二重投稿防止: {reason}")
+    if detail:
+        print(f"    {detail}")
+    print(f"    対象タイトル: {title}")
+    print("    スキップし、ファイルをprocessedへ移動します。")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    processed_text = os.path.join(PROCESSED_DIR, f"{timestamp}_SKIP_DUP_{os.path.basename(text_file)}")
+    _safe_move(text_file, processed_text, "テキスト（重複のためスキップ）")
+    print()
+    print("=" * 62)
+    print(f"📰 記事タイトル: {title}")
+    print("=" * 62)
 
 # ----------------- メインロジック -----------------
 def main():
@@ -676,7 +805,6 @@ def main():
 
     print(f"📂 処理対象ファイル: {os.path.basename(text_file)}")
     
-    import re
     import urllib.request
     import urllib.parse
     
@@ -718,22 +846,80 @@ def main():
             excerpt_str += stripped + " "
 
     content = "".join(content_lines).strip()
+
+    # 2.4 二重投稿防止（画像DL前）：ローカル .md の同一タイトル＋WordPress の同一タイトル（正規化一致）
+    if not _update_post_id:
+        dup_local = find_local_duplicate_title(title, text_file)
+        if dup_local:
+            skip_duplicate_draft(
+                text_file,
+                title,
+                "同一タイトル（正規化一致）のドラフトがローカルに存在します",
+                dup_local,
+            )
+            return
+        existing_early = post_exists_with_title(title)
+        if existing_early:
+            skip_duplicate_draft(
+                text_file,
+                title,
+                f"同一タイトルの記事が既にWordPressに存在します (Post ID: {existing_early})",
+            )
+            return
     
-    # [IMAGE_BLOCK] 形式を ![]() 形式に変換（article_creation_guidelines.md 準拠）
-    # 既存の画像パイプラインで処理するため、事前に正規化
-    image_block_pattern = re.compile(
-        r'\[IMAGE_BLOCK\]\s*\n'
-        r'(?:説明:\s*([^\n]*)\s*\n)?'
-        r'URL:\s*(https?://[^\s\n]+)\s*\n'
-        r'(?:[^\]]*\n)*?'
-        r'\[/IMAGE_BLOCK\]',
-        re.MULTILINE
+    # [IMAGE_BLOCK] 形式を ![]() ＋キャプション（出典・著作権注記）に変換（article_creation_guidelines.md 準拠）
+    _IMAGE_BLOCK_DEFAULT_RIGHTS = (
+        "※画像の著作権は原権利者に帰属します。"
+        "本メディアは出典名・URLを表示し、報道・公益的告知の範囲での引用を目指します。"
+        "出典表示のみでは許諾の代替とならず、二次利用は各権利者および各サイトの利用規約に従ってください。"
     )
-    def _image_block_to_md(m):
-        alt = (m.group(1) or "").strip()
-        url = m.group(2).strip()
-        return f"![{alt}]({url})"
-    content = image_block_pattern.sub(_image_block_to_md, content)
+
+    def _parse_image_block_body(body: str) -> dict:
+        out = {}
+        for line in body.strip().split("\n"):
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+            key, _, rest = line.partition(":")
+            out[key.strip()] = rest.strip()
+        return out
+
+    def _image_blocks_to_markdown(html: str) -> str:
+        block_re = re.compile(r"\[IMAGE_BLOCK\]\s*\n(.*?)\n\[/IMAGE_BLOCK\]", re.DOTALL)
+
+        def repl(m):
+            blk = _parse_image_block_body(m.group(1))
+            url = (blk.get("URL") or blk.get("url") or "").strip()
+            if not url:
+                return m.group(0)
+            desc = (blk.get("説明") or "").strip() or "画像"
+            cap_user = (blk.get("キャプション") or "").strip()
+            src_name = (blk.get("出典名") or "").strip()
+            src_url = (blk.get("出典URL") or "").strip()
+            photographer = (blk.get("撮影者") or "").strip()
+            acquisition = (blk.get("取得区分") or "").strip()
+            rights = (blk.get("著作権注記") or "").strip()
+            if not rights:
+                rights = _IMAGE_BLOCK_DEFAULT_RIGHTS
+            parts = []
+            if cap_user:
+                parts.append(cap_user)
+            if acquisition:
+                parts.append(f"［取得区分：{acquisition}］")
+            if src_name:
+                if src_url:
+                    parts.append(f"出典：[{src_name}]({src_url})")
+                else:
+                    parts.append(f"出典：{src_name}")
+            if photographer:
+                parts.append(f"撮影：{photographer}")
+            parts.append(rights)
+            caption = " ".join(parts)
+            return f"![{desc}]({url})\n\n*{caption}*"
+
+        return block_re.sub(repl, html)
+
+    content = _image_blocks_to_markdown(content)
     
     # 画像リンク抽出（![]() 形式）: URL とローカルパス両対応
     # URL: https?://... / ローカル: assets/xxx.png や ./assets/xxx.png
@@ -938,18 +1124,49 @@ def main():
         if existing_post and existing_post.get("date"):
             scheduled_date = existing_post["date"]
             print(f"\n📝 更新モード: Post ID {_update_post_id} の日付を維持 ({scheduled_date.replace('T', ' ')})")
-    elif not _post_as_draft:
+        # --date / --hour 指定時は予約日時を付け替える
+        if _schedule_hour is not None or _target_date:
+            scheduled_date = None
+            print("  📅 --date / --hour 指定のため、予約日時を再計算します。")
+    if not _post_as_draft and scheduled_date is None:
         print("\n⏳ スケジュール枠を検索中...")
-        posts = api_request("posts?status=future&per_page=100&_fields=date")
+        posts = api_request("posts?status=future&per_page=100&_fields=date,id")
         taken_slots = set()
         if posts:
-            taken_slots = {p['date'] for p in posts}
+            # 更新対象の投稿自身の日時は「埋まり」に含めない（再予約で同一枠を選べるようにする）
+            for p in posts:
+                if _update_post_id and p.get("id") == _update_post_id:
+                    continue
+                key = _schedule_slot_key_from_wp_date(p.get("date"))
+                if key:
+                    taken_slots.add(key)
             
         now = datetime.now()
         # 予約枠：1日18件（6時〜23時、1時間毎）
         # 基本は「今日」から検索し、利用可能な最も早い枠を優先
         fallback_slots = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
-        if _target_date:
+        # --hour: 指定日（--date または当日0時）のその時刻を最優先（過去・埋まりなら従来ロジックへ）
+        if _schedule_hour is not None:
+            try:
+                if _target_date:
+                    y, m, d = [int(x) for x in _target_date.strip().split("-")]
+                    day0 = datetime(y, m, d, 0, 0, 0)
+                else:
+                    day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                slot_candidate = day0.replace(hour=_schedule_hour, minute=0, second=0, microsecond=0)
+                slot_str = slot_candidate.strftime("%Y-%m-%dT%H:%M:%S")
+                # 他記事（＋更新対象以外の future 投稿）と同一時刻は常に不可。更新時も他枠の占有は尊重する。
+                slot_ok = slot_candidate > now and slot_str not in taken_slots
+                if slot_ok:
+                    scheduled_date = slot_str
+                    print(f"  📅 --hour {_schedule_hour} で予約日時を確定: {scheduled_date.replace('T', ' ')}")
+                elif slot_str in taken_slots:
+                    print(f"  ⚠ --hour {_schedule_hour} の枠は埋まっています。空き枠検索にフォールバックします。", file=sys.stderr)
+                else:
+                    print(f"  ⚠ --hour {_schedule_hour} は過去のため使えません。空き枠検索にフォールバックします。", file=sys.stderr)
+            except (ValueError, IndexError, TypeError) as e:
+                print(f"  ⚠ --hour 解釈失敗: {e}。空き枠検索にフォールバックします。", file=sys.stderr)
+        if not scheduled_date and _target_date:
             try:
                 y, m, d = [int(x) for x in _target_date.strip().split("-")]
                 check_date = datetime(y, m, d, 0, 0, 0)
@@ -957,49 +1174,34 @@ def main():
             except (ValueError, IndexError):
                 check_date = now.replace(minute=0, second=0, microsecond=0)
                 print(f"  ⚠ --date 解釈失敗（{_target_date}）、現在時刻を基準にします。", file=sys.stderr)
-        else:
+        elif not scheduled_date:
             check_date = now.replace(minute=0, second=0, microsecond=0)
         day_range = 30
         
-        for day_offset in range(day_range):
-            current_day = check_date + timedelta(days=day_offset)
-            for h in fallback_slots:
-                slot_candidate = current_day.replace(hour=h)
-                if slot_candidate <= now:
-                    continue # 過去の時間はスキップ
-                slot_str = slot_candidate.strftime("%Y-%m-%dT%H:%M:%S")
-                if slot_str not in taken_slots:
-                    scheduled_date = slot_str
+        if not scheduled_date:
+            for day_offset in range(day_range):
+                current_day = check_date + timedelta(days=day_offset)
+                for h in fallback_slots:
+                    slot_candidate = current_day.replace(hour=h)
+                    if slot_candidate <= now:
+                        continue # 過去の時間はスキップ
+                    slot_str = slot_candidate.strftime("%Y-%m-%dT%H:%M:%S")
+                    if slot_str not in taken_slots:
+                        scheduled_date = slot_str
+                        break
+                if scheduled_date:
                     break
-            if scheduled_date:
-                break
                 
         if not scheduled_date:
             scheduled_date = (now + timedelta(hours=2)).strftime("%Y-%m-%dT%H:00:00")
             
         print(f"✅ 次の空き枠: {scheduled_date.replace('T', ' ')}")
     
-    # 6.5. 二重投稿防止：同一タイトル（完全一致）の投稿が既にあるか確認。本文・抜粋の内容照合は行わない。更新時はスキップしない。
-    if not _update_post_id:
-        existing_id = post_exists_with_title(title)
-        if existing_id:
-            print(f"\n⚠️  二重投稿防止: 同一タイトルの記事が既に存在します (Post ID: {existing_id})")
-            print(f"    対象タイトル: {title}")
-            print(f"    スキップし、ファイルをprocessedへ移動します。")
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            processed_text = os.path.join(PROCESSED_DIR, f"{timestamp}_SKIP_DUP_{os.path.basename(text_file)}")
-            _safe_move(text_file, processed_text, "テキスト（重複のためスキップ）")
-            print()
-            print("=" * 62)
-            print(f"📰 記事タイトル: {title}")
-            print("=" * 62)
-            return
-    
     # 6.9. 本文をWordPressブロック形式（Gutenberg）に変換
     content = to_block_format(content)
     if title and _should_prepend_title_h1():
         content = _prepend_title_h1_block(content, title)
-        print("  ℹ 本文先頭に H1 タイトルを挿入しました（テーマと二重になる場合は API_POSTER_PREPEND_TITLE_H1=0）")
+        print("  ℹ 本文先頭に H1 を挿入しました（API_POSTER_PREPEND_TITLE_H1=1。通常はテーマ表示と二重になるため既定オフ）")
 
     # 7. 記事の投稿（または更新）
     if _update_post_id:
