@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-全サイトの予約投稿を1日10件以内に再調整するスクリプト。
-予約枠: 6, 8, 10, 12, 14, 16, 18, 20, 22, 23時（6時〜23時）
+全サイトの予約投稿を1日24枠（毎正時 :00・60分間隔）に沿って再調整するスクリプト。
+api_poster.py の予約枠と整合させる。
 """
 import json
 import base64
@@ -9,12 +9,27 @@ import urllib.request
 import ssl
 import os
 from datetime import datetime, timedelta
-from collections import defaultdict
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SITES_PATH = os.path.join(BASE_DIR, "sites.json")
-SLOTS = [6, 8, 10, 12, 14, 16, 18, 20, 22, 23]  # 1日10枠（6時〜23時）
-MAX_PER_DAY = 10
+MAX_PER_DAY = 24  # 1日24枠（毎正時、api_poster と同じ）
+
+
+def _ceil_to_next_hour_slot(dt):
+    dt = dt.replace(second=0, microsecond=0)
+    floored = dt.replace(minute=0)
+    if floored > dt:
+        return floored
+    return floored + timedelta(hours=1)
+
+
+def iter_slots_from_now(now):
+    """now より後の正時 :00 枠を時系列で yield（datetime）"""
+    current = _ceil_to_next_hour_slot(now)
+    while True:
+        yield current
+        current = current + timedelta(hours=1)
+
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -73,33 +88,6 @@ def update_post_date(api_url, user, app_pass, post_id, new_date_str):
     )
 
 
-def iter_slots_from_now(now):
-    """now以降のスロットを(日付, 時)で順に yield"""
-    d = now.replace(minute=0, second=0, microsecond=0)
-    start_idx = 0
-    # 本日で now より後の枠を探す
-    for i, h in enumerate(SLOTS):
-        cand = d.replace(hour=h)
-        if cand > now:
-            start_idx = i
-            break
-    else:
-        # 本日の枠は全て過ぎている→翌日から
-        d = d + timedelta(days=1)
-        start_idx = 0
-
-    # 本日の残り枠
-    for h in SLOTS[start_idx:]:
-        yield (d.date(), h)
-    d = d + timedelta(days=1)
-
-    # 以降は毎日12枠ずつ
-    while True:
-        for h in SLOTS:
-            yield (d.date(), h)
-        d = d + timedelta(days=1)
-
-
 def reschedule_site(site_name, api_url, user, app_pass, dry_run=True):
     print(f"\n{'='*50}")
     print(f"📌 {site_name}")
@@ -113,13 +101,12 @@ def reschedule_site(site_name, api_url, user, app_pass, dry_run=True):
     now = datetime.now()
     posts_sorted = sorted(posts, key=lambda x: x["date"])
 
-    # 本日から全件を再配置。枠は6-17時、1日最大12件。
+    # 本日から全件を再配置。枠は毎正時、1 日最大 24 件。
     new_assignments = []
     slot_iter = iter_slots_from_now(now)
 
     for p in posts_sorted:
-        date_part, hour = next(slot_iter)
-        new_dt = datetime.combine(date_part, datetime.min.time().replace(hour=hour, minute=0, second=0))
+        new_dt = next(slot_iter)
         new_date_str = new_dt.strftime("%Y-%m-%dT%H:%M:%S")
         if new_date_str != p["date"][:19]:
             new_assignments.append((p["id"], new_date_str, p.get("title")))

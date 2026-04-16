@@ -33,7 +33,10 @@ def main():
         print(f"  バッチ処理ループ #{loop}")
         print(f"==============================\n")
 
-        api_poster.main()
+        result = api_poster.main()
+        if result is False:
+            print(" これ以上処理対象ファイルが存在しないため、バッチ処理を終了します。")
+            break
 
         # 連続で叩きすぎないように軽く待つ（サーバー負荷対策）
         time.sleep(2)
