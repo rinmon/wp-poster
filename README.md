@@ -29,7 +29,7 @@ WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress 
 | スクリプト | 用途 |
 |------------|------|
 | `process_all_drafts.py` | drafts 内の全ドラフトを順次処理 |
-| `reschedule_posts.py` | 全サイトの予約投稿を1日24枠（毎正時 :00・60分間隔）に沿って再調整 |
+| `reschedule_posts.py` | 全サイトの予約投稿を 6:00〜23:00・30分刻みの枠に沿って再調整 |
 | `check_article_duplicates.py` | 投稿前チェック（ローカル md + WP 同一タイトル、`--scheduled` で予約重複も） |
 | `list_duplicate_scheduled.py` | 予約重複を検出・表示 |
 | `check_server_health.py` | サーバー診断（SSH経由） |
