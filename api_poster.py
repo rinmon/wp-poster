@@ -939,10 +939,9 @@ def main():
             return
     
     # [IMAGE_BLOCK] 形式を ![]() ＋キャプション（出典・著作権注記）に変換（article_creation_guidelines.md 準拠）
+    # スマホ閲覧向けに既定は短くする。詳細な著作権文言が必要な記事は IMAGE_BLOCK の「著作権注記:」で上書き。
     _IMAGE_BLOCK_DEFAULT_RIGHTS = (
-        "※画像の著作権は原権利者に帰属します。"
-        "本メディアは出典名・URLを表示し、報道・公益的告知の範囲での引用を目指します。"
-        "出典表示のみでは許諾の代替とならず、二次利用は各権利者および各サイトの利用規約に従ってください。"
+        "※著作権は原権利者に帰属。二次利用は各規約に従ってください。"
     )
 
     def _parse_image_block_body(body: str) -> dict:
@@ -957,6 +956,35 @@ def main():
 
     def _image_blocks_to_markdown(html: str) -> str:
         block_re = re.compile(r"\[IMAGE_BLOCK\]\s*\n(.*?)\n\[/IMAGE_BLOCK\]", re.DOTALL)
+
+        def _compact_acquisition_line(acquisition: str, cap_user: str) -> str:
+            """取得区分を短い表記に。キャプションに既にAI明記があれば省略。"""
+            if not acquisition:
+                return ""
+            acq = acquisition.strip()
+            cap = cap_user or ""
+            if ("生成AI" in acq or "AIイメージ" in acq) and (
+                "生成AI" in cap or "AIにより" in cap or "AI生成" in cap
+            ):
+                return ""
+            if "生成AI" in acq or "AIイメージ" in acq:
+                return "［AI生成］"
+            # 長い定型（ガイドライン貼り付け等）は短縮
+            if len(acq) > 36:
+                return f"［{acq[:33]}…］"
+            return f"［{acq}］"
+
+        def _fmt_source_line(src_name: str, src_url: str) -> str:
+            """ローカルファイルパスはリンクにせず短く（スマホでURLが暴れないように）。"""
+            if not src_name:
+                return ""
+            su = (src_url or "").strip()
+            is_http = su.startswith("http://") or su.startswith("https://")
+            if su and not is_http:
+                return f"出典：{src_name}"
+            if su and is_http:
+                return f"出典：[{src_name}]({su})"
+            return f"出典：{src_name}"
 
         def repl(m):
             blk = _parse_image_block_body(m.group(1))
@@ -975,13 +1003,12 @@ def main():
             parts = []
             if cap_user:
                 parts.append(cap_user)
-            if acquisition:
-                parts.append(f"［取得区分：{acquisition}］")
-            if src_name:
-                if src_url:
-                    parts.append(f"出典：[{src_name}]({src_url})")
-                else:
-                    parts.append(f"出典：{src_name}")
+            acq_line = _compact_acquisition_line(acquisition, cap_user)
+            if acq_line:
+                parts.append(acq_line)
+            src_line = _fmt_source_line(src_name, src_url)
+            if src_line:
+                parts.append(src_line)
             if photographer:
                 parts.append(f"撮影：{photographer}")
             parts.append(rights)
