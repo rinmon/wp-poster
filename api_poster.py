@@ -24,14 +24,81 @@ from schedule_slots import (
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def _strip_outer_markdown_title_emphasis(s: str) -> str:
+    """
+    ドラフト1行目が **題名** や ＊＊題名＊＊（NFKC 後は **）のように
+    外側だけ Markdown 太字で囲まれているとき、WP の post_title 用に除去する。
+    内文に含まれる ** は触れない（外側の balanced ** のみ最大6回まで剥がす）。
+    """
+    t = unicodedata.normalize("NFKC", (s or "").strip())
+    outer = re.compile(r"^\*{2}(.+)\*{2}$", re.DOTALL)
+    for _ in range(6):
+        m = outer.fullmatch(t)
+        if not m:
+            break
+        inner = m.group(1).strip()
+        if not inner or inner == t:
+            break
+        t = inner
+    return t
+
+
 def _normalize_title_from_first_line(line):
-    """1行目からタイトルを取得（BOM除去・Markdown H1対応）。"""
+    """1行目からタイトルを取得（BOM除去・Markdown H1・外側 ** 対応）。"""
     t = (line or "").strip()
     if t.startswith("\ufeff"):
         t = t.lstrip("\ufeff").strip()
     if t.startswith("# "):
         t = t[2:].strip()
-    return t
+    return _strip_outer_markdown_title_emphasis(t)
+
+
+# 不可視文字（ZWSP 等）を除き NFKC 化したうえで、末尾メタ行の表記ゆれを吸収する
+_TAXONOMY_INVISIBLE = re.compile(r"[\u200b\u200c\u200d\ufeff\u2060]")
+
+
+def _scrub_taxonomy_line(line):
+    if line is None:
+        return ""
+    s = unicodedata.normalize("NFKC", str(line).strip())
+    return _TAXONOMY_INVISIBLE.sub("", s)
+
+
+def _taxonomy_marker_kind(line):
+    """
+    ドラフト末尾の **タグ** / **カテゴリ** / **メタディスクリプション** 行を識別する。
+    完全一致のみだと表記ゆれで本文にメタが残るため、緩い fullmatch を使う。
+    戻り値: "tags" | "categories" | "meta" | None
+    """
+    s = _scrub_taxonomy_line(line)
+    if not s:
+        return None
+    # 例: **タグ** / **タグ**： / ＊＊タグ＊＊ / ****タグ**
+    if re.fullmatch(r"[*＊]{2,}\s*タグ\s*[*＊]{0,}\s*[:：]?", s):
+        return "tags"
+    if re.fullmatch(r"[*＊]{2,}\s*カテゴリ\s*[*＊]{0,}\s*[:：]?", s):
+        return "categories"
+    if re.fullmatch(r"[*＊]{2,}\s*メタディスクリプション\s*[*＊]{0,}\s*[:：]?", s):
+        return "meta"
+    return None
+
+
+def _strip_trailing_taxonomy_leak_from_body(text):
+    """
+    パース漏れで本文末尾に **タグ** / **カテゴリ** / **メタディスクリプション** ブロックが
+    残っている場合に削除する（保険）。文末付近にメタ見出し行があれば、その先頭行で打ち切る。
+    メタ順が入れ替わっていても、末尾ウィンドウ内で最初に現れる見出しから除去する。
+    """
+    if not (text and text.strip()):
+        return text
+    lines = text.split("\n")
+    n = len(lines)
+    # 末尾 40 行以内のみ見る（本文前半の太字「タグ」等との誤爆を避ける）
+    start = max(0, n - 40)
+    hits = [i for i in range(start, n) if _taxonomy_marker_kind(lines[i])]
+    if hits:
+        return "\n".join(lines[: min(hits)]).rstrip()
+    return text
 
 
 def _normalize_title_for_duplicate(s):
@@ -39,6 +106,7 @@ def _normalize_title_for_duplicate(s):
     if not s:
         return ""
     t = unicodedata.normalize("NFKC", str(s).strip())
+    t = _strip_outer_markdown_title_emphasis(t)
     return " ".join(t.split())
 
 
@@ -47,10 +115,10 @@ def _wp_title_plain(p):
     obj = p.get("title") or {}
     raw = (obj.get("raw") or "").strip()
     if raw:
-        return raw
+        return _strip_outer_markdown_title_emphasis(raw)
     rend = obj.get("rendered") or ""
     rend = re.sub(r"<[^>]+>", "", rend)
-    return html.unescape(rend).strip()
+    return _strip_outer_markdown_title_emphasis(html.unescape(rend).strip())
 
 
 def _rest_api_title_field(title_str):
@@ -468,75 +536,79 @@ def to_block_format(content):
                     blocks.append(p)
             continue
         # 4. 見出し: ##, ###, ####
-        h4 = re.match(r'^####\s+(.+)$', raw, re.DOTALL)
-        h3 = re.match(r'^###\s+(.+)$', raw, re.DOTALL)
-        h2 = re.match(r'^##\s+(.+)$', raw, re.DOTALL)
-        h1 = re.match(r'^#\s+(.+)$', raw, re.DOTALL)
-        for level, m in [(4, h4), (3, h3), (2, h2), (1, h1)]:
-            if m:
-                inner = m.group(1).strip()
-                inner = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', inner)
-                inner = re.sub(r'\*(.+?)\*', r'<em>\1</em>', inner)
-                blocks.append(f'<!-- wp:heading {{"level":{level}}} -->\n<h{level}>{inner}</h{level}>\n<!-- /wp:heading -->')
-                break
-        else:
-            # 3. Markdown表: | A | B | 形式の行が2行以上連続（末尾に注釈があっても分離して処理）
-            lines = raw.split('\n')
-            table_lines = []
-            rest_after_table = []
-            in_table = False
-            table_ended = False
-            for ln in lines:
-                stripped = ln.strip()
-                if not stripped:
-                    if in_table:
-                        table_ended = True
+        m_head = re.match(r'^(#{1,4})\s+([^\n]+)(?:\n(.*))?$', raw, flags=re.DOTALL)
+        if m_head:
+            level = len(m_head.group(1))
+            inner = m_head.group(2).strip()
+            rest_text = m_head.group(3)
+            
+            inner = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', inner)
+            inner = re.sub(r'\*(.+?)\*', r'<em>\1</em>', inner)
+            blocks.append(f'<!-- wp:heading {{"level":{level}}} -->\n<h{level}>{inner}</h{level}>\n<!-- /wp:heading -->')
+            
+            if rest_text and rest_text.strip():
+                p = wrap_paragraph(rest_text)
+                if p:
+                    blocks.append(p)
+            continue
+        
+        # 3. Markdown表: | A | B | 形式の行が2行以上連続（末尾に注釈があっても分離して処理）
+        lines = raw.split('\n')
+        table_lines = []
+        rest_after_table = []
+        in_table = False
+        table_ended = False
+        for ln in lines:
+            stripped = ln.strip()
+            if not stripped:
+                if in_table:
+                    table_ended = True
+                continue
+            is_table_row = bool(re.match(r'^\|.+\|$', stripped))
+            if is_table_row and not table_ended:
+                table_lines.append(stripped)
+                in_table = True
+            else:
+                if in_table:
+                    table_ended = True
+                rest_after_table.append(stripped)
+        is_table = len(table_lines) >= 2 and all(re.match(r'^\|.+\|$', ln) for ln in table_lines)
+        if is_table:
+            rows = []
+            for ln in table_lines:
+                parts = ln.split('|')
+                cells = [c.strip() for c in parts[1:-1]] if len(parts) >= 2 else []
+                if not cells:
                     continue
-                is_table_row = bool(re.match(r'^\|.+\|$', stripped))
-                if is_table_row and not table_ended:
-                    table_lines.append(stripped)
-                    in_table = True
-                else:
-                    if in_table:
-                        table_ended = True
-                    rest_after_table.append(stripped)
-            is_table = len(table_lines) >= 2 and all(re.match(r'^\|.+\|$', ln) for ln in table_lines)
-            if is_table:
-                rows = []
-                for ln in table_lines:
-                    parts = ln.split('|')
-                    cells = [c.strip() for c in parts[1:-1]] if len(parts) >= 2 else []
-                    if not cells:
-                        continue
-                    # 区切り行（---のみ）はスキップ
-                    if all(re.match(r'^:?-+:?$', c) for c in cells):
-                        continue
-                    rows.append(cells)
-                if rows:
-                    # 1行目をヘッダー、残りをボディ
-                    thead_cells = rows[0]
-                    tbody_rows = rows[1:]
-                    thead_html = '<thead><tr>' + ''.join(f'<th>{html.escape(c)}</th>' for c in thead_cells) + '</tr></thead>'
-                    tbody_html = '<tbody>'
-                    for row in tbody_rows:
-                        # 列数がヘッダーと異なる場合は調整
-                        cells = row[:len(thead_cells)] + [''] * (len(thead_cells) - len(row))
-                        tbody_html += '<tr>' + ''.join(f'<td>{html.escape(str(c))}</td>' for c in cells[:len(thead_cells)]) + '</tr>'
-                    tbody_html += '</tbody>'
-                    # is-style-stripes: 明細行の縞模様 / has-dark-header: ヘッダー濃背景・白文字
-                    table_html = f'<figure class="wp-block-table is-style-stripes has-dark-header"><table>{thead_html}{tbody_html}</table></figure>'
-                    blocks.append(f'<!-- wp:table -->\n{table_html}\n<!-- /wp:table -->')
-                    # 表の直後の注釈などを段落として追加
-                    if rest_after_table:
-                        rest_text = ' '.join(rest_after_table)
-                        p = wrap_paragraph(rest_text)
-                        if p:
-                            blocks.append(p)
+                # 区切り行（---のみ）はスキップ
+                if all(re.match(r'^:?-+:?$', c) for c in cells):
                     continue
-            # 5. 通常の段落
-            p = wrap_paragraph(raw)
-            if p:
-                blocks.append(p)
+                rows.append(cells)
+            if rows:
+                # 1行目をヘッダー、残りをボディ
+                thead_cells = rows[0]
+                tbody_rows = rows[1:]
+                thead_html = '<thead><tr>' + ''.join(f'<th>{html.escape(c)}</th>' for c in thead_cells) + '</tr></thead>'
+                tbody_html = '<tbody>'
+                for row in tbody_rows:
+                    # 列数がヘッダーと異なる場合は調整
+                    cells = row[:len(thead_cells)] + [''] * (len(thead_cells) - len(row))
+                    tbody_html += '<tr>' + ''.join(f'<td>{html.escape(str(c))}</td>' for c in cells[:len(thead_cells)]) + '</tr>'
+                tbody_html += '</tbody>'
+                # is-style-stripes: 明細行の縞模様 / has-dark-header: ヘッダー濃背景・白文字
+                table_html = f'<figure class="wp-block-table is-style-stripes has-dark-header"><table>{thead_html}{tbody_html}</table></figure>'
+                blocks.append(f'<!-- wp:table -->\n{table_html}\n<!-- /wp:table -->')
+                # 表の直後の注釈などを段落として追加
+                if rest_after_table:
+                    rest_text = '\n'.join(rest_after_table)
+                    p = wrap_paragraph(rest_text)
+                    if p:
+                        blocks.append(p)
+                continue
+        # 5. 通常の段落
+        p = wrap_paragraph(raw)
+        if p:
+            blocks.append(p)
     
     return '\n\n'.join(blocks) if blocks else content
 
@@ -826,13 +898,14 @@ def main():
         current_section = "content"
         for line in lines[1:]:
             s = line.strip()
-            if s == "**タグ**":
+            mk = _taxonomy_marker_kind(line)
+            if mk == "tags":
                 current_section = "tags"
                 continue
-            elif s == "**カテゴリ**":
+            elif mk == "categories":
                 current_section = "categories"
                 continue
-            elif s == "**メタディスクリプション**":
+            elif mk == "meta":
                 break
             if current_section == "content":
                 content_lines.append(line)
@@ -913,16 +986,17 @@ def main():
     
     for line in lines[1:]: # 2行目以降
         stripped = line.strip()
-        if stripped == "**タグ**":
+        mk = _taxonomy_marker_kind(line)
+        if mk == "tags":
             current_section = "tags"
             continue
-        elif stripped == "**カテゴリ**":
+        elif mk == "categories":
             current_section = "categories"
             continue
-        elif stripped == "**メタディスクリプション**":
+        elif mk == "meta":
             current_section = "excerpt"
             continue
-            
+
         if current_section == "content":
             content_lines.append(line)
         elif current_section == "tags" and stripped:
@@ -933,6 +1007,8 @@ def main():
             excerpt_str += stripped + " "
 
     content = "".join(content_lines).strip()
+    # メタ行の表記ゆれでパース漏れした場合、本文末尾に **タグ** 以降が残るのを除去
+    content = _strip_trailing_taxonomy_leak_from_body(content)
 
     # 2.4 二重投稿防止（画像DL前）：ローカル .md の同一タイトル＋WordPress の同一タイトル（正規化一致）
     if not _update_post_id:
@@ -1216,7 +1292,12 @@ def main():
         if category_map:
             names = [x.strip() for x in categories_str.replace('、', ',').split(',') if x.strip()]
             mapped = [category_map.get(n, n) for n in names]
-            categories_str_resolved = ",".join(mapped)
+            # 旧→新で同一カテゴリに収束した場合など、重複を除いてから REST に渡す
+            seen_names: list[str] = []
+            for m in mapped:
+                if m not in seen_names:
+                    seen_names.append(m)
+            categories_str_resolved = ",".join(seen_names)
             if categories_str_resolved != categories_str:
                 print(f"  ※ カテゴリマッピング適用: {categories_str} → {categories_str_resolved}")
     cat_ids = get_term_ids("categories", categories_str_resolved, create_new=cat_create_new)
