@@ -29,7 +29,7 @@ WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress 
 | スクリプト | 用途 |
 |------------|------|
 | `process_all_drafts.py` | drafts 内の全ドラフトを順次処理 |
-| `reschedule_posts.py` | 全サイトの予約投稿を 6:00〜23:00・1時間刻み（正時）の枠に沿って再調整 |
+| `reschedule_posts.py` | 全サイトの予約投稿を 5:00〜24:00・1時間刻み（正時）の枠に沿って再調整 |
 | `check_article_duplicates.py` | 投稿前チェック（ローカル md + WP 同一タイトル、`--scheduled` で予約重複も） |
 | `tools/fix_consecutive_h3_body.py` | 誤って `###` になった本文行を通常段落に戻す（H3直後の長文 `###` を除去。`--dry-run` で差分のみ） |
 | `list_duplicate_scheduled.py` | 予約重複を検出・表示 |

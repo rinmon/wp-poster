@@ -18,6 +18,7 @@ from schedule_slots import (
     ceil_to_next_schedule_slot,
     is_valid_schedule_slot,
     schedule_slots_for_day,
+    slot_to_datetime,
 )
 
 # ----------------- 設定 -----------------
@@ -212,11 +213,11 @@ for i, arg in enumerate(sys.argv[1:], 1):
     if arg == "--hour" and i + 1 <= len(sys.argv) - 1:
         try:
             h = int(sys.argv[i + 1])
-            if 6 <= h <= 23:
+            if 5 <= h <= 23 or h == 24:
                 _schedule_hour = h
             else:
                 print(
-                    "⚠ --hour は 6〜23 のみ有効です（6:00〜23:00 の1時間刻み枠・正時）。",
+                    "⚠ --hour は 5〜23 または 24 のみ有効です（5:00〜24:00 の1時間刻み枠・正時。24=翌0:00）。",
                     file=sys.stderr,
                 )
         except ValueError:
@@ -1523,7 +1524,7 @@ def main():
                     taken_counts[key] += 1
             
         now = datetime.now()
-        # 予約枠：空き検索時は 6:00〜23:00・1時間刻み・正時（1日最大18枠）。
+        # 予約枠：空き検索時は 5:00〜24:00・1時間刻み・正時（24:00=翌0:00、1日最大20枠）。
         # --hour/--minute 指定時は分まで含めて占有判定
         # 基本は「今日」から検索し、利用可能な最も早い枠を優先
         fallback_slots = schedule_slots_for_day()
@@ -1535,15 +1536,25 @@ def main():
                     day0 = datetime(y, m, d, 0, 0, 0)
                 else:
                     day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                slot_candidate = day0.replace(
-                    hour=_schedule_hour, minute=_schedule_minute, second=0, microsecond=0
-                )
+                if _schedule_hour == 24:
+                    slot_candidate = day0 + timedelta(days=1)
+                else:
+                    slot_candidate = day0.replace(
+                        hour=_schedule_hour,
+                        minute=_schedule_minute,
+                        second=0,
+                        microsecond=0,
+                    )
                 slot_str = slot_candidate.strftime("%Y-%m-%dT%H:%M:%S")
                 # 他記事（＋更新対象以外の future 投稿）と同一時刻は常に不可。更新時も他枠の占有は尊重する。
                 slot_ok = slot_candidate > now and taken_counts.get(slot_str, 0) == 0
                 if slot_ok:
                     scheduled_date = slot_str
-                    hm = f"{_schedule_hour}:{_schedule_minute:02d}"
+                    hm = (
+                        "24:00（翌0:00）"
+                        if _schedule_hour == 24
+                        else f"{_schedule_hour}:{_schedule_minute:02d}"
+                    )
                     print(f"  📅 --hour/--minute ({hm}) で予約日時を確定: {scheduled_date.replace('T', ' ')}")
                 elif taken_counts.get(slot_str, 0) > 0:
                     print(f"  ⚠ --hour {_schedule_hour} の枠は埋まっています。空き枠検索にフォールバックします。", file=sys.stderr)
@@ -1566,10 +1577,11 @@ def main():
         if not scheduled_date:
             for day_offset in range(day_range):
                 current_day = check_date + timedelta(days=day_offset)
-                for h, m in fallback_slots:
-                    slot_candidate = current_day.replace(
-                        hour=h, minute=m, second=0, microsecond=0
-                    )
+                day_start = current_day.replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                for h, m, dadd in fallback_slots:
+                    slot_candidate = slot_to_datetime(day_start, h, m, dadd)
                     if slot_candidate <= now:
                         continue  # 過去の時間はスキップ
                     slot_str = slot_candidate.strftime("%Y-%m-%dT%H:%M:%S")

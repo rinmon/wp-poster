@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-全サイトの予約投稿を 6:00〜23:00・1時間刻み（正時）の枠に沿って再調整するスクリプト。
-api_poster.py の予約枠と整合させる。
+全サイトの予約投稿を 5:00〜24:00・1時間刻み（正時）の枠に沿って再調整するスクリプト。
+api_poster.py の予約枠と整合させる（24:00 は翌 0:00 として表現）。
 """
 import json
 import base64
@@ -15,7 +15,7 @@ from schedule_slots import iter_schedule_slots_from
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SITES_PATH = os.path.join(BASE_DIR, "sites.json")
 
-MAX_PER_DAY = 18  # 1日最大18枠（6:00〜23:00・1時間刻み・正時、api_poster と同じ）
+MAX_PER_DAY = 20  # 1日最大20枠（5:00〜24:00・1時間刻み・正時、api_poster と同じ）
 
 
 def iter_slots_from_now(now):
@@ -93,7 +93,7 @@ def reschedule_site(site_name, api_url, user, app_pass, dry_run=True):
     now = datetime.now()
     posts_sorted = sorted(posts, key=lambda x: x["date"])
 
-    # 本日から全件を再配置。枠は 6:00〜23:00・1時間刻み（正時）、1 日最大 18 件。
+    # 本日から全件を再配置。枠は 5:00〜24:00・1時間刻み（正時）、1 日最大 20 件。
     new_assignments = []
     slot_iter = iter_slots_from_now(now)
 
