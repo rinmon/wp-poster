@@ -1,7 +1,7 @@
 """
 WordPress 予約投稿の枠（api_poster / reschedule_posts で共有）。
 
-6:00〜23:00・30分刻み固定。1日あたり最大35枠（23:30 はなし）。
+6:00〜23:00・1時間刻み固定。1日あたり最大18枠（毎正時、最終枠は23:00）。
 """
 from __future__ import annotations
 
@@ -13,12 +13,10 @@ SCHEDULE_LAST_HOUR = 23
 
 
 def schedule_slots_for_day():
-    """1日分の (hour, minute) を時系列で返す（6:00 … 22:30, 23:00）。"""
+    """1日分の (hour, minute) を時系列で返す（6:00, 7:00, …, 23:00）。"""
     slots = []
-    for h in range(SCHEDULE_FIRST_HOUR, SCHEDULE_LAST_HOUR):
-        for m in (0, 30):
-            slots.append((h, m))
-    slots.append((SCHEDULE_LAST_HOUR, 0))
+    for h in range(SCHEDULE_FIRST_HOUR, SCHEDULE_LAST_HOUR + 1):
+        slots.append((h, 0))
     return slots
 
 
@@ -26,9 +24,7 @@ def is_valid_schedule_slot(hour: int, minute: int) -> bool:
     """--hour / --minute 指定が枠に合致するか。"""
     if hour < SCHEDULE_FIRST_HOUR or hour > SCHEDULE_LAST_HOUR:
         return False
-    if minute not in (0, 30):
-        return False
-    if hour == SCHEDULE_LAST_HOUR and minute != 0:
+    if minute != 0:
         return False
     return True
 
