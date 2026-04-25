@@ -42,7 +42,14 @@ from api_poster import (  # noqa: E402
     _normalize_title_for_duplicate,
     _normalize_title_from_first_line,
     find_local_duplicate_title,
+    post_exists_with_hints,
     post_exists_with_title,
+)
+from duplicate_hints import (  # noqa: E402
+    DEFAULT_HINT_DUPLICATE_THRESHOLD,
+    collect_tag_sharing_similarity_pairs,
+    find_local_hint_duplicate,
+    parse_draft_hints_from_path,
 )
 
 sys.argv = _saved_argv
@@ -132,32 +139,68 @@ def run_scheduled_future_duplicate_check() -> bool:
     return False
 
 
+def _hint_draft_dirs() -> list[str]:
+    d = [DRAFTS_DIR, PROCESSED_DIR]
+    for name in _get_site_specific_drafts():
+        d.append(os.path.join(BASE, "drafts", name))
+    return d
+
+
 def check_one(title: str, exclude_path: str | None, site_label: str) -> int:
-    """単一タイトル: ローカル重複 → WP 既存の順に表示。重複があれば exit 1"""
+    """単一ファイル/タイトル: ローカル（タイトル・タグ・抜粋）→ WP の順。重複があれば exit 1"""
     t = title.strip()
     if not t:
         print("タイトルが空です。", file=sys.stderr)
         return 2
 
     print(f"サイト: [{site_label}] {WP_API_URL}")
-    print(f"タイトル: {t}\n")
-
-    local_other = find_local_duplicate_title(t, exclude_path or "")
-    wp_id = post_exists_with_title(t)
+    print(f"タイトル: {t}")
+    print(
+        f"重複判定: タイトル正規化一致 または 類似度 >= {DEFAULT_HINT_DUPLICATE_THRESHOLD} "
+        f"（タイトル・タグ・メタディスクリプション。環境変数 DUP_HINT_THRESHOLD で変更可）\n"
+    )
 
     code = 0
-    if local_other:
-        print(f"❌ ローカル重複: 別ファイルに同一（正規化）タイトルがあります")
-        print(f"    → {local_other}")
+    hints = None
+    if exclude_path and os.path.isfile(exclude_path):
+        hints = parse_draft_hints_from_path(exclude_path)
+        local_hint = find_local_hint_duplicate(
+            hints, exclude_path, _hint_draft_dirs(), threshold=DEFAULT_HINT_DUPLICATE_THRESHOLD
+        )
+    else:
+        local_hint = None
+    if local_hint:
+        o_path, sc = local_hint
+        print("❌ ローカル重複候補: 別 .md がタイトル一致、またはタグ・抜粋が近い")
+        print(f"    → {o_path}（類似度 {sc:.2f}）")
         code = 1
     else:
-        print("✅ ローカル: 同一タイトルの別ファイルなし")
+        if exclude_path and os.path.isfile(exclude_path):
+            print("✅ ローカル: 重複候補の別ファイルなし（タイトル・タグ・抜粋）")
+        else:
+            local_other = find_local_duplicate_title(t, exclude_path or "")
+            if local_other:
+                print("❌ ローカル: 同一（正規化）タイトルの別ファイルあり")
+                print(f"    → {local_other}")
+                code = 1
+            else:
+                print("✅ ローカル: 同一タイトルの別ファイルなし（--title のみのためタグ比較は未実施）")
 
-    if wp_id:
-        print(f"❌ WordPress: 既に同一タイトルの投稿があります（post ID: {wp_id}）")
-        code = 1
+    if hints is not None:
+        wp_h = post_exists_with_hints(hints)
+        if wp_h:
+            wid, reason = wp_h
+            print(f"❌ WordPress: 重複候補（{reason}） post ID: {wid}")
+            code = 1
+        else:
+            print("✅ WordPress: 重複候補なし（publish/future/draft/private）")
     else:
-        print("✅ WordPress: 同一タイトル未検出（publish/future/draft/private）")
+        wp_id = post_exists_with_title(t)
+        if wp_id:
+            print(f"❌ WordPress: 既に同一タイトルの投稿があります（post ID: {wp_id}）")
+            code = 1
+        else:
+            print("✅ WordPress: 同一タイトル未検出（--title のみ; タグ抜粋は未使用）")
 
     return code
 
@@ -215,6 +258,27 @@ def main() -> int:
                 if wid:
                     print(f"  WordPress には既に同一タイトル相当の投稿があります（ID: {wid}）")
                 print()
+        print("=" * 60)
+        print("タグを共有する .md 同士の重複候補（タイトル・タグ・抜粋）")
+        print("=" * 60)
+        hint_dirs = _hint_draft_dirs()
+        pairs = collect_tag_sharing_similarity_pairs(
+            hint_dirs, threshold=DEFAULT_HINT_DUPLICATE_THRESHOLD
+        )
+        if not pairs:
+            print(
+                f"✅ 閾値 {DEFAULT_HINT_DUPLICATE_THRESHOLD} 以上の重複候補ペアはありません"
+                f"（少なくとも1タグ共有のペアのみ比較）。\n"
+            )
+        else:
+            exit_code = 1
+            print(
+                f"⚠️  {len(pairs)} 件の重複候補ペア（共有タグ経由。同一タイトル以外も含みます）:\n"
+            )
+            for a, b, sc in pairs:
+                print(f"  類似度 {sc:.2f}")
+                print(f"    {a}")
+                print(f"    {b}\n")
         if args.scheduled:
             run_scheduled_block()
         return exit_code

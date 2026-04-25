@@ -1,5 +1,5 @@
 {
-  "_comment": "sites.json にコピーし、各サイトの app_pass を記入。sites.json は .gitignore で除外されます。",
+  "_comment": "sites.json にコピーし、各サイトの app_pass を記入。sites.json は .gitignore で除外されます。chotto.category_map はドラフト内の旧カテゴリ名を data/chotto_categories_reference.txt の正式名へ寄せるためだけに使い、新規カテゴリを増やさないこと。",
   "_aliases": {
     "高島市": "takashima",
     "福山市": "fukuyama"
@@ -7,7 +7,8 @@
   "chotto": {
     "api_url": "https://example.com/wp-json/wp/v2",
     "user": "your_username",
-    "app_pass": "xxxx xxxx xxxx xxxx xxxx xxxx"
+    "app_pass": "xxxx xxxx xxxx xxxx xxxx xxxx",
+    "category_map": {}
   },
   "takashima": {
     "api_url": "https://example.com/wp-json/wp/v2",

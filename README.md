@@ -31,10 +31,31 @@ WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress 
 | `process_all_drafts.py` | drafts 内の全ドラフトを順次処理 |
 | `reschedule_posts.py` | 全サイトの予約投稿を 5:00〜24:00・1時間刻み（正時）の枠に沿って再調整 |
 | `check_article_duplicates.py` | 投稿前チェック（ローカル md + WP 同一タイトル、`--scheduled` で予約重複も） |
-| `tools/fix_consecutive_h3_body.py` | 誤って `###` になった本文行を通常段落に戻す（H3直後の長文 `###` を除去。`--dry-run` で差分のみ） |
+| `duplicate_hints.py` | 重複検出の類似度ヒント（`check_article_duplicates` から利用） |
 | `list_duplicate_scheduled.py` | 予約重複を検出・表示 |
+| `get_posts.py` / `search_posts.py` | 投稿一覧・検索（REST） |
+| `create_draft.py` / `create_late_uncle_draft.py` | ドラフト雛形の生成 |
+| `get_x_images.py` | 互換ラッパ（実体は `tools/x_fetch.py`）。ツイートのメディアURL / `--timeline` |
+| `fetch_x_data.py` | 互換ラッパ。`tools/x_fetch.py --page`（Cookie 付きで先頭ツイート列の本文・画像） |
+| `tools/x_fetch.py` | X 取得の集約。単一ツイートURL（既定） / `--timeline` / `--page`（`x_cookies_template.json` 参照） |
+| `tools/wp_client.py` | `sites.json` ベースの WordPress REST（メディアアップロード・投稿更新） |
+| `update_featured_image.py` | 既存投稿のアイキャッチを差し替え（`sites.json` 認証・`--site` `--post`） |
+| `update_post_images.py` | 高島・豊臣系の初回投入用サンプル（Wikimedia 図＋QR。`tools/wp_client.py`・`--site` `--post`） |
+| `update_toyotomi_images.py` | 同上記事の本文画像一括差し替え（`tools/wp_client.py`・`--site` `--post`） |
+| `enrich_recent_chotto_tags.py` / `export_chotto_tags.py` | CHOTTO タグ周り |
 | `check_server_health.py` | サーバー診断（SSH経由） |
+| `test_ssh.py` | SSH 接続テスト |
+| `wp_version_snapshot.py` | WordPress バージョン取得の補助 |
 | `delete_post.py` | 指定IDの投稿を削除 |
+| `tools/fetch_og_image.py` | 公式・報道ページの og:image URL 取得（IMAGE_BLOCK 用） |
+| `tools/fetch_x_media_urls.py` | ツイート URL からメディア URL 列挙 |
+| `tools/screenshot_page.py` | 任意 URL のスクリーンショット（`--tweet` で先頭ツイートのみ、`--full-page`） |
+| `tools/fix_consecutive_h3_body.py` | 誤って `###` になった本文行を通常段落に戻す（`--dry-run`） |
+| `tools/export_chotto_categories.py` | CHOTTO カテゴリ一覧のエクスポート |
+| `tools/fix_chotto_categories_by_publish_date.py` | 公開日基準のカテゴリ修正 |
+| `tools/move_chotto_post_to_fukuyama.py` | サイト間移動の補助 |
+
+**整理メモ（2026-04）**: 使い捨ての一括修正（特定 Post ID・日付固定の `fix_*.py`）、認証をファイルに直書きしたアップロード系、未完成の断片スクリプト、重複していたスクリーンショット用の短いスクリプトは削除済み。アイキャッチの更新は **`update_featured_image.py` + `sites.json`** を使うこと。
 
 ## 認証情報の設定
 

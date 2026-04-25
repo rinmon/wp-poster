@@ -34,11 +34,11 @@ def slot_to_datetime(day0: datetime, hour: int, minute: int, days_after_day0: in
 
 
 def is_valid_schedule_slot(hour: int, minute: int) -> bool:
-    """--hour / --minute 指定が枠に合致するか。hour=24 は翌 0:00 枠（24:00）。"""
-    if minute != 0:
+    """--hour / --minute 指定が枠に合致するか。hour=24 は翌 0:00 枠（24:00、分は0のみ）。"""
+    if not (0 <= minute <= 59):
         return False
     if hour == 24:
-        return True
+        return minute == 0
     return SCHEDULE_FIRST_HOUR <= hour <= SCHEDULE_LAST_HOUR_SAME_CALENDAR_DAY
 
 

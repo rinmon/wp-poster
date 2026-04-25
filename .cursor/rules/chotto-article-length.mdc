@@ -1,0 +1,18 @@
+---
+description: CHOTTO想定記事の既定本文文字数（約4,400字）。タスク切替後も同じ目標に揃える
+globs: drafts/**/*.md, article_creation_guidelines.md, .cursor/rules/article-creation.mdc, .cursor/rules/article-rinmon-overlay.mdc
+alwaysApply: true
+---
+
+# 記事本文の既定ボリューム（BLOG / CHOTTO）
+
+**特に指示がない**記事執筆（`drafts/**/*.md`、主に CHOTTO 投稿想定）の**本文**（行 `**タグ**` より前）の目標は次のとおり。**エージェント履歴が切れても**、まず本ルールを確認してから執筆・拡張する。
+
+| 項目 | 既定（デフォルト） | 例外（長文） |
+|------|-------------------|--------------|
+| 目安文字数 | **約4,400字** | 依頼で**長文**・**8,000字**・**原稿10枚**等が明示のとき **7,200～8,800字** 目安 |
+| 許容レンジ | おおよそ **4,000～4,800字** | 上記長文レンジ |
+| 執筆上の意図 | **初稿から**4,400字前後を狙い、**後出しで7200字に水増ししない** | 企画の性質上、初めから長文が要る場合のみ |
+
+- 分量・表・メタ・画像の**その他**は `article_creation_guidelines.md` と `.cursor/rules/article-creation.mdc` に従う。
+- **rinmon 文体のみ**等で分量が曖昧なときも、**既定は4,400字前後**（オーバーレイ `article-rinmon-overlay.mdc` の「優先順位」表と整合）。

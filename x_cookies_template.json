@@ -1,0 +1,16 @@
+[
+  {
+    "domain": ".x.com",
+    "name": "auth_token",
+    "value": "あなたのChromeからエクスポートしたauth_tokenの値をここに入力",
+    "path": "/",
+    "secure": true
+  },
+  {
+    "domain": ".x.com",
+    "name": "ct0",
+    "value": "エクスポートしたct0の値をここに入力（CSRFトークン）",
+    "path": "/",
+    "secure": true
+  }
+]

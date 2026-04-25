@@ -1,26 +1,21 @@
-import asyncio
-from playwright.async_api import async_playwright
+#!/usr/bin/env python3
+"""
+互換エントリ: 実装は tools/x_fetch.py。
 
-async def main():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        print("Navigating to URL...")
-        await page.goto("https://x.com/elonmusk", wait_until="networkidle", timeout=60000)
-        # We need the trending tweet or recent tweet from elon
-        await page.wait_for_timeout(5000)
-        
-        # Taking screenshot for debugging
-        await page.screenshot(path="x_debug.png")
-        
-        # Evaluate for images in timeline
-        images = await page.evaluate("""() => {
-            return Array.from(document.querySelectorAll('img')).map(img => img.src).filter(src => src.includes('pbs.twimg.com/media'));
-        }""")
-        print("Found media:")
-        for img in images:
-            print(img)
-            
-        await browser.close()
+例:
+  python3 get_x_images.py "https://x.com/NASA/status/123"
+  python3 get_x_images.py --timeline "https://x.com/NASA" --cookies x_cookies.json
+"""
+from __future__ import annotations
 
-asyncio.run(main())
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.x_fetch import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

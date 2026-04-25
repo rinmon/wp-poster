@@ -14,6 +14,17 @@ import glob
 import shutil
 from collections import Counter
 
+from duplicate_hints import (
+    DEFAULT_HINT_DUPLICATE_THRESHOLD,
+    DraftHints,
+    WP_HINT_SEARCH_PER_PAGE,
+    find_local_hint_duplicate,
+    hint_duplicate_score,
+    normalize_excerpt_for_hint,
+    parse_draft_hints_from_path,
+    wp_search_phrase,
+)
+
 from schedule_slots import (
     ceil_to_next_schedule_slot,
     is_valid_schedule_slot,
@@ -227,11 +238,11 @@ for i, arg in enumerate(sys.argv[1:], 1):
     if arg == "--minute" and i + 1 <= len(sys.argv) - 1:
         try:
             m = int(sys.argv[i + 1])
-            if m == 0:
+            if 0 <= m <= 59:
                 _schedule_minute = m
             else:
                 print(
-                    "⚠ --minute は 0 のみ有効です（1時間刻み・正時）。",
+                    "⚠ --minute は 0〜59 のみ有効です。",
                     file=sys.stderr,
                 )
         except ValueError:
@@ -244,7 +255,7 @@ if _schedule_hour is not None and not is_valid_schedule_slot(
     _schedule_hour, _schedule_minute
 ):
     print(
-        "⚠ --hour/--minute の組み合わせが枠外です（正時以外の分は不可）。自動検索にフォールバックします。",
+        "⚠ --hour/--minute の組み合わせが枠外です（5〜23時は0〜59分、24時は0分のみ）。自動検索にフォールバックします。",
         file=sys.stderr,
     )
     _schedule_hour = None
@@ -434,6 +445,12 @@ def find_target_file_auto_mode():
     return f, os.path.dirname(f)
 
 # ---------------------------------------------------------------------------
+# 画像取得について（公式ページの og:image / 報道記事）
+#
+# whitehouse.gov 等は **単純な HTTP クライアントや MCP fetch が 403** になり HTML が取れないことがある。
+# 執筆時は `tools/fetch_og_image.py` またはブラウザ相当 UA の curl で **og:image** と **本文内の公式画像 URL**
+# を取得してから IMAGE_BLOCK に書く（article_creation_guidelines.md §5 参照）。
+# ---------------------------------------------------------------------------
 # 画像取得について（X / Twitter 投稿を参照する場合）
 #
 # 本スクリプトは Markdown 内の ![]() から **画像・動画の直接 URL**（https://... で拡張子または
@@ -441,12 +458,21 @@ def find_target_file_auto_mode():
 #   - 投稿ページ URL そのもの（例: https://x.com/.../status/... ）→ HTML が返り失敗しうる
 #   - 短縮 URL のみ、埋め込み用 iframe 用 URL のみ、など
 #
+# 官公庁・防衛省・記者会見ネタの注意：mod.go.jp の会見ページは写真なし／Cloudflare で og 取得失敗がありがち。
+# 一次ビジュアルは公式 X（@ModJapan_jp / @JGSDF_pr 等）の画像付き投稿をブラウザで探し、その status URL を
+# tools/fetch_x_media_urls.py に渡して pbs.twimg.com を取る（上記「X のメディア」の項）。
+#
 # X（Twitter）のメディアを使う場合の推奨（ドラフト作成・記事執筆フェーズで実施）:
-#   1. 可能なら **pbs.twimg.com** 形式の画像直リンクを IMAGE_BLOCK の URL に書く（ガイドライン優先）。
-#   2. curl / urllib 単体では **403** になることがある。そのときは Playwright 等のブラウザ自動化で
-#      投稿ページを開き、ネットワークまたは DOM から **メディアの直 URL を列挙・取得**し、
-#      取得できた URL を IMAGE_BLOCK に記載してから本スクリプトを実行する。
-#   3. 本スクリプト実行時に Playwright を起動する処理は**入れていない**（依存関係と CI を簡潔に保つため）。
+#   1. 可能なら **pbs.twimg.com** 形式の画像直リンクを IMAGE_BLOCK の「URL:」に書く（ガイドライン優先）。
+#      この形式は下記ツール出力と本スクリプトの urllib ダウンロード処理と整合する。
+#   2. 単一ツイート URL から列挙: `python3 tools/fetch_x_media_urls.py "https://x.com/.../status/ID"`
+#      または `python3 get_x_images.py "https://x.com/.../status/ID"`（内部は同一。v2 の
+#      /2/status/{id} → vxTwitter → レガシー v1 の順、Accept: application/json・指数バックオフ
+#      最大3回まで）。デバッグは `tools/fetch_x_media_urls.py --json`。
+#   3. 削除済み・非公開・メディア無しのツイートはいずれの経路でも取得できない。
+#   4. タイムライン全体が必要なときのみ `get_x_images.py --timeline --cookies ...`（fetch_x_data.py
+#      と同様の Cookie JSON）。curl / urllib だけでは **403** になりうる。
+#   5. 本スクリプト実行時に Playwright を起動する処理は**入れていない**（依存関係と CI を簡潔に保つため）。
 # ---------------------------------------------------------------------------
 # 著作権・ニュース写真と AI イメージ差し替え（編集方針は article_creation_guidelines.md §5）
 #
@@ -977,6 +1003,82 @@ def post_exists_with_title(title):
     return None
 
 
+def post_exists_with_hints(hints: DraftHints):
+    """
+    タイトル正規化一致に加え、タグと抜粋（メタ／WP excerpt）の近さで重複候補を返す。
+    戻り値: (post_id, 理由) または None
+    """
+    if hints is None:
+        return None
+    tid = post_exists_with_title(hints.title)
+    if tid:
+        return (tid, "タイトル正規化一致")
+    if not hints.tags and not (hints.excerpt and hints.excerpt.strip()):
+        return None
+    phrase = wp_search_phrase(hints)
+    if len(phrase.strip()) < 2:
+        return None
+    enc = urllib.parse.quote(phrase.strip())
+    endpoint = (
+        f"posts?search={enc}&per_page={WP_HINT_SEARCH_PER_PAGE}"
+        f"&status=publish,future,draft,private&_fields=id"
+    )
+    res = api_request(endpoint)
+    ids = []
+    if isinstance(res, list):
+        ids = [p.get("id") for p in res if p.get("id")]
+    if not ids and hints.tags:
+        enc2 = urllib.parse.quote(hints.tags[0].strip()[: min(40, len(hints.tags[0]))])
+        res2 = api_request(
+            f"posts?search={enc2}&per_page={WP_HINT_SEARCH_PER_PAGE}"
+            f"&status=publish,future,draft,private&_fields=id"
+        )
+        if isinstance(res2, list):
+            ids = [p.get("id") for p in res2 if p.get("id")]
+    if not ids:
+        return None
+    ids = ids[:20]
+    id_str = ",".join(str(i) for i in ids)
+    posts = api_request(
+        f"posts?include={id_str}&per_page=20&status=publish,future,draft,private"
+        f"&_fields=id,title,excerpt,tags"
+    )
+    if not isinstance(posts, list) or not posts:
+        return None
+    all_tag_ids = set()
+    for p in posts:
+        for t in p.get("tags") or []:
+            all_tag_ids.add(t)
+    tag_names = {}
+    if all_tag_ids:
+        inc = ",".join(str(x) for x in sorted(all_tag_ids)[:100])
+        tlist = api_request(f"tags?include={inc}&per_page=100&_fields=id,name")
+        if isinstance(tlist, list):
+            for t in tlist:
+                i = t.get("id")
+                if i is not None:
+                    tag_names[i] = (t.get("name") or "").strip()
+    best_sc = 0.0
+    best_id = None
+    for p in posts:
+        title_plain = _wp_title_plain(p)
+        ex_obj = p.get("excerpt") or {}
+        ex_raw = (ex_obj.get("raw") or ex_obj.get("rendered") or "").strip()
+        ex_raw = re.sub(r"<[^>]+>", "", html.unescape(ex_raw))
+        ex_clean = normalize_excerpt_for_hint(ex_raw)
+        tids = p.get("tags") or []
+        tnames = [tag_names.get(tid, "") for tid in tids]
+        tnames = [x for x in tnames if x]
+        other = DraftHints(title=title_plain, tags=tnames, excerpt=ex_clean)
+        sc = hint_duplicate_score(hints, other)
+        if sc > best_sc:
+            best_sc = sc
+            best_id = p.get("id")
+    if best_id is not None and best_sc >= DEFAULT_HINT_DUPLICATE_THRESHOLD:
+        return (best_id, f"タイトル・タグ・抜粋の類似 (スコア {best_sc:.2f} >= {DEFAULT_HINT_DUPLICATE_THRESHOLD})")
+    return None
+
+
 def find_local_duplicate_title(title, exclude_path):
     """
     drafts / processed / サイト別ドラフト内の .md を走査し、
@@ -1186,23 +1288,32 @@ def main():
     # メタ行の表記ゆれでパース漏れした場合、本文末尾に **タグ** 以降が残るのを除去
     content = _strip_trailing_taxonomy_leak_from_body(content)
 
-    # 2.4 二重投稿防止（画像DL前）：ローカル .md の同一タイトル＋WordPress の同一タイトル（正規化一致）
+    # 2.4 二重投稿防止（画像DL前）：ローカル .md ＋ WordPress（タイトル・タグ・抜粋ヒント）
     if not _update_post_id:
-        dup_local = find_local_duplicate_title(title, text_file)
+        hint_dirs = [DRAFTS_DIR, PROCESSED_DIR]
+        for _site_d in _get_site_specific_drafts():
+            hint_dirs.append(os.path.join(BASE_DIR, "drafts", _site_d))
+        hints = parse_draft_hints_from_path(text_file)
+        dup_local = find_local_hint_duplicate(
+            hints, text_file, hint_dirs, threshold=DEFAULT_HINT_DUPLICATE_THRESHOLD
+        )
         if dup_local:
+            o_path, sc = dup_local
             skip_duplicate_draft(
                 text_file,
                 title,
-                "同一タイトル（正規化一致）のドラフトがローカルに存在します",
-                dup_local,
+                "ローカルに重複候補（タイトル・タグ・抜粋）",
+                f"{o_path}（類似度 {sc:.2f}。閾値 {DEFAULT_HINT_DUPLICATE_THRESHOLD}）",
             )
             return
-        existing_early = post_exists_with_title(title)
+        existing_early = post_exists_with_hints(hints)
         if existing_early:
+            eid, reason = existing_early
             skip_duplicate_draft(
                 text_file,
                 title,
-                f"同一タイトルの記事が既にWordPressに存在します (Post ID: {existing_early})",
+                f"WordPress に重複候補があります (Post ID: {eid})",
+                reason,
             )
             return
     
