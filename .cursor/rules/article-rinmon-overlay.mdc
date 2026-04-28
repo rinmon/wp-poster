@@ -6,6 +6,8 @@ alwaysApply: false
 
 # rinmon 文体・バズ3要素オーバーレイ
 
+**既定の CHOTTO 記事**では、**`.cursor/rules/article-human-tone.mdc`**（です・ます基調・である連打の抑制）が**常に併用**される。本ファイルは、そのうえで **rinmon口調**、**自分ごと**、**短め分量** 等が**明示されたとき**、またはユーザーが本ルールを参照したときに、**追加適用**する。
+
 記事依頼で **rinmon口調**、**自分ごと**、**短め分量** 等が明示されたとき、またはユーザーが本ルールを参照したときは、**`article_creation_guidelines.md` の E-E-A-T、IMAGE_BLOCK、一次情報・公式優先、api_poster 互換**は維持しつつ、以下を追加適用する。
 
 ## 文体（rinmon）

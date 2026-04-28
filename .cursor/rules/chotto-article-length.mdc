@@ -14,5 +14,6 @@ alwaysApply: true
 | 許容レンジ | おおよそ **4,000～4,800字** | 上記長文レンジ |
 | 執筆上の意図 | **初稿から**4,400字前後を狙い、**後出しで7200字に水増ししない** | 企画の性質上、初めから長文が要る場合のみ |
 
-- 分量・表・メタ・画像の**その他**は `article_creation_guidelines.md` と `.cursor/rules/article-creation.mdc` に従う。
+- 分量・表・メタ・画像の**その他**は `article_creation_guidelines.md` と `.cursor/rules/article-creation.mdc` に従う。**文体の人間味・硬さの抑制**は `.cursor/rules/article-human-tone.mdc`（既定・`alwaysApply`）に従う。
+- **段落・改行・H3（ブログ体裁）**：**空行で段落分け**（1塊の長文にしない）、**リード最低2段落**、情報量の多い H2 では**具体名の H3** と **2～5文程度の段落**に分けること。詳細は `article_creation_guidelines.md` セクション2「Markdown 上の段落・改行（ブログ本文の可読性・CHOTTO 既定）」および `.cursor/rules/article-creation.mdc` の「段落・改行・H3」。
 - **rinmon 文体のみ**等で分量が曖昧なときも、**既定は4,400字前後**（オーバーレイ `article-rinmon-overlay.mdc` の「優先順位」表と整合）。

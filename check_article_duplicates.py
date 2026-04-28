@@ -16,18 +16,31 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 
 
 def _argv_for_api_poster_import(full_argv: list[str]) -> list[str]:
-    """--site のみ api_poster に渡す（chotto 既定かつ未指定なら site 行を付けず、起動時の余計な出力を避ける）。"""
+    """
+    api_poster に渡す argv。--site 優先。
+    --file のみのときはパス（とメタ）から投稿先を推定し、3 サイトそれぞれ正しい WP を照会する。
+    """
     prog = full_argv[0] if full_argv else "check_article_duplicates.py"
     site = None
+    file_arg = None
     i = 1
     while i < len(full_argv):
         if full_argv[i] == "--site" and i + 1 < len(full_argv):
             site = full_argv[i + 1]
             i += 2
             continue
+        if full_argv[i] in ("--file", "-f") and i + 1 < len(full_argv):
+            file_arg = full_argv[i + 1]
+            i += 2
+            continue
         i += 1
     if site:
         return [prog, "--site", site]
+    if file_arg:
+        from draft_site import infer_site_key_from_file_arg
+
+        sk = infer_site_key_from_file_arg(file_arg, BASE)
+        return [prog, "--site", sk]
     return [prog]
 
 
@@ -35,12 +48,12 @@ _saved_argv = sys.argv[:]
 sys.argv = _argv_for_api_poster_import(_saved_argv)
 
 from api_poster import (  # noqa: E402
-    DRAFTS_DIR,
-    PROCESSED_DIR,
     WP_API_URL,
-    _get_site_specific_drafts,
+    _all_local_draft_dirs_for_dup,
     _normalize_title_for_duplicate,
     _normalize_title_from_first_line,
+    _wp_title_plain,
+    draft_site_key_for_path,
     find_local_duplicate_title,
     post_exists_with_hints,
     post_exists_with_title,
@@ -56,12 +69,7 @@ sys.argv = _saved_argv
 
 
 def _iter_local_md_paths():
-    dirs = [DRAFTS_DIR, PROCESSED_DIR]
-    for name in _get_site_specific_drafts():
-        dirs.append(os.path.join(BASE, "drafts", name))
-    for folder in dirs:
-        if not os.path.isdir(folder):
-            continue
+    for folder in _all_local_draft_dirs_for_dup():
         for path in glob.glob(os.path.join(folder, "*.md")):
             bn = os.path.basename(path).upper()
             if bn == "README_DRAFTS.MD" or bn.startswith("."):
@@ -79,15 +87,17 @@ def _title_from_md(path: str) -> str | None:
 
 
 def collect_local_duplicate_groups() -> dict[str, list[str]]:
-    """正規化タイトル -> ファイルパス一覧（2件以上がローカル重複）"""
+    """投稿先サイトごとの正規化タイトル -> ファイルパス一覧（2件以上がローカル重複）"""
     key_paths: dict[str, list[str]] = {}
     for path in sorted(_iter_local_md_paths()):
         title = _title_from_md(path)
         if not title:
             continue
-        k = _normalize_title_for_duplicate(title)
-        if not k:
+        norm = _normalize_title_for_duplicate(title)
+        if not norm:
             continue
+        sk = draft_site_key_for_path(path)
+        k = f"{sk}\t{norm}"
         key_paths.setdefault(k, []).append(path)
     return {k: v for k, v in key_paths.items() if len(v) > 1}
 
@@ -113,22 +123,25 @@ def run_scheduled_future_duplicate_check() -> bool:
         print("予約投稿（future）: なし\n")
         return True
 
-    by_title: dict[str, list] = {}
+    # 生の raw/rendered 文字列ではなく、api_poster と同じ正規化タイトルで束ねる
+    by_key: dict[str, list] = {}
     for p in all_posts:
-        title_obj = p.get("title") or {}
-        title = title_obj.get("raw") or title_obj.get("rendered", "").replace("&#8211;", "–")
-        if title not in by_title:
-            by_title[title] = []
-        by_title[title].append(p)
+        title_plain = _wp_title_plain(p)
+        k = _normalize_title_for_duplicate(title_plain)
+        if not k:
+            k = f"__empty_{p.get('id', '')}"
+        if k not in by_key:
+            by_key[k] = []
+        by_key[k].append(p)
 
-    dups = {t: plist for t, plist in by_title.items() if len(plist) > 1}
+    dups = {t: plist for t, plist in by_key.items() if len(plist) > 1}
     if not dups:
-        print(f"予約投稿（future）: {len(all_posts)} 件 — 同一タイトルの重複なし\n")
+        print(f"予約投稿（future）: {len(all_posts)} 件 — 同一タイトル（正規化）の重複なし\n")
         return True
 
-    print(f"⚠️  予約投稿（future）で同一タイトルが {len(dups)} 件あります:\n")
-    for title, plist in dups.items():
-        tshow = title[:50] + ("..." if len(title) > 50 else "")
+    print(f"⚠️  予約投稿（future）で同一タイトル（正規化）が {len(dups)} 件あります:\n")
+    for _norm_key, plist in dups.items():
+        tshow = _norm_key[:50] + ("..." if len(_norm_key) > 50 else "")
         print(f"【{tshow}】")
         for i, p in enumerate(sorted(plist, key=lambda x: x.get("date", ""))):
             pid = p.get("id")
@@ -140,10 +153,7 @@ def run_scheduled_future_duplicate_check() -> bool:
 
 
 def _hint_draft_dirs() -> list[str]:
-    d = [DRAFTS_DIR, PROCESSED_DIR]
-    for name in _get_site_specific_drafts():
-        d.append(os.path.join(BASE, "drafts", name))
-    return d
+    return _all_local_draft_dirs_for_dup()
 
 
 def check_one(title: str, exclude_path: str | None, site_label: str) -> int:
@@ -156,16 +166,21 @@ def check_one(title: str, exclude_path: str | None, site_label: str) -> int:
     print(f"サイト: [{site_label}] {WP_API_URL}")
     print(f"タイトル: {t}")
     print(
-        f"重複判定: タイトル正規化一致 または 類似度 >= {DEFAULT_HINT_DUPLICATE_THRESHOLD} "
+        f"重複判定: 同一投稿先サイト内で、タイトル正規化一致 または 類似度 >= {DEFAULT_HINT_DUPLICATE_THRESHOLD} "
         f"（タイトル・タグ・メタディスクリプション。環境変数 DUP_HINT_THRESHOLD で変更可）\n"
     )
 
     code = 0
     hints = None
     if exclude_path and os.path.isfile(exclude_path):
+        print(f"ローカル推定サイト: {draft_site_key_for_path(exclude_path)}（draft_site.py のパス / メタルール）\n")
         hints = parse_draft_hints_from_path(exclude_path)
         local_hint = find_local_hint_duplicate(
-            hints, exclude_path, _hint_draft_dirs(), threshold=DEFAULT_HINT_DUPLICATE_THRESHOLD
+            hints,
+            exclude_path,
+            _hint_draft_dirs(),
+            threshold=DEFAULT_HINT_DUPLICATE_THRESHOLD,
+            site_key=draft_site_key_for_path,
         )
     else:
         local_hint = None
@@ -178,7 +193,9 @@ def check_one(title: str, exclude_path: str | None, site_label: str) -> int:
         if exclude_path and os.path.isfile(exclude_path):
             print("✅ ローカル: 重複候補の別ファイルなし（タイトル・タグ・抜粋）")
         else:
-            local_other = find_local_duplicate_title(t, exclude_path or "")
+            local_other = find_local_duplicate_title(
+                t, exclude_path or "", site_key_for_path=draft_site_key_for_path
+            )
             if local_other:
                 print("❌ ローカル: 同一（正規化）タイトルの別ファイルあり")
                 print(f"    → {local_other}")
@@ -228,7 +245,14 @@ def main() -> int:
         print("--file / --title / --scan-drafts は同時に指定しないでください。", file=sys.stderr)
         return 2
 
-    site_label = args.site or "chotto（既定）"
+    if args.site:
+        site_label = args.site
+    elif args.file:
+        from draft_site import infer_site_key_from_file_arg
+
+        site_label = f"{infer_site_key_from_file_arg(args.file, BASE)}（--file から推定）"
+    else:
+        site_label = "chotto（既定）"
     exit_code = 0
 
     def run_scheduled_block():
@@ -241,22 +265,32 @@ def main() -> int:
 
     if args.scan_drafts:
         print("=" * 60)
-        print("ローカル全 .md のタイトル重複（正規化一致）")
+        print("ローカル全 .md のタイトル重複（同一投稿先サイト・正規化一致）")
         print("=" * 60)
         groups = collect_local_duplicate_groups()
         if not groups:
-            print("✅ ローカルに同一タイトル（正規化）の重複ファイルはありません。\n")
+            print("✅ 同一サイト内に同一タイトル（正規化）の重複ファイルはありません。\n")
         else:
             exit_code = 1
-            print(f"⚠️  {len(groups)} 組の重複があります:\n")
+            print(f"⚠️  {len(groups)} 組の重複があります（サイトが異なれば同一タイトルも別記事扱い）:\n")
             for k, paths in sorted(groups.items(), key=lambda x: x[0]):
-                print(f"「{k[:60]}{'...' if len(k) > 60 else ''}」")
+                sk, _, title_part = k.partition("\t")
+                tshow = title_part[:56] + ("..." if len(title_part) > 56 else "")
+                print(f"【{sk}】「{tshow}」")
                 for p in paths:
                     print(f"  - {p}")
                 t0 = _title_from_md(paths[0])
-                wid = post_exists_with_title(t0) if t0 else None
+                sk = draft_site_key_for_path(paths[0])
+                wid = None
+                if t0:
+                    from api_poster import post_exists_with_title, use_wp_site_credentials
+
+                    with use_wp_site_credentials(sk):
+                        wid = post_exists_with_title(t0)
                 if wid:
-                    print(f"  WordPress には既に同一タイトル相当の投稿があります（ID: {wid}）")
+                    print(
+                        f"  WordPress（サイト: {sk}）には既に同一タイトル相当の投稿があります（ID: {wid}）"
+                    )
                 print()
         print("=" * 60)
         print("タグを共有する .md 同士の重複候補（タイトル・タグ・抜粋）")

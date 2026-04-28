@@ -13,8 +13,8 @@ WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress 
 - **ドラフト保存** … `--draft` で公開せず下書きとして保存
 - **Markdown表の自動変換** … `| A | B |` 形式を WordPress 表ブロック（wp:table）に変換
 - **複数サイト対応** … 記事内容から投稿先を自動判定（`site_detection.json` でキーワード・サイトを設定可能）
-- **サイト別ドラフト** … `drafts/サイト名/` を `--site` 指定時に使用（設定で変更可）
-- **二重投稿防止** … 同一タイトルの記事が既にある場合はスキップ
+- **サイト別ドラフト** … `drafts/takashima/`・`drafts/fukuyama/` 等。CHOTTO は従来どおり `drafts/` 直下または `drafts/chotto/`。案内は `drafts/README_site_drafts.md`
+- **二重投稿防止** … 同一正規化タイトル（＋タグ・抜粋の類似度）を REST 検索に加え、直近更新順の走査で補完。投稿直前に再確認。`API_POSTER_DUP_RECENT_SCAN_PAGES` 等は `.env.example` 参照
 
 ### 画像・動画
 
@@ -29,7 +29,7 @@ WordPress 記事投稿ワークフロー。Markdownドラフトから WordPress 
 | スクリプト | 用途 |
 |------------|------|
 | `process_all_drafts.py` | drafts 内の全ドラフトを順次処理 |
-| `reschedule_posts.py` | 全サイトの予約投稿を 5:00〜24:00・1時間刻み（正時）の枠に沿って再調整 |
+| `reschedule_posts.py` | 全サイトの予約投稿を 0:00〜22:00・2時間刻み（正時）の枠に沿って再調整 |
 | `check_article_duplicates.py` | 投稿前チェック（ローカル md + WP 同一タイトル、`--scheduled` で予約重複も） |
 | `duplicate_hints.py` | 重複検出の類似度ヒント（`check_article_duplicates` から利用） |
 | `list_duplicate_scheduled.py` | 予約重複を検出・表示 |

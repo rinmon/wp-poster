@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
 予約投稿（future）の重複を検出・一覧表示するスクリプト
+
+例: python3 list_duplicate_scheduled.py --site takashima
+（--site 省略時は api_poster と同様 CHOTTO 既定）
 """
 import os
 import sys
@@ -8,8 +11,21 @@ import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-# api_poster の設定を読み込む（sites.json, .env）
-from api_poster import api_request, WP_API_URL
+# api_poster は import 時に sys.argv の --site だけを見る
+_orig_argv = sys.argv[:]
+_prog = _orig_argv[0] if _orig_argv else "list_duplicate_scheduled.py"
+_site_for_import = None
+_i = 1
+while _i < len(_orig_argv):
+    if _orig_argv[_i] == "--site" and _i + 1 < len(_orig_argv):
+        _site_for_import = _orig_argv[_i + 1]
+        break
+    _i += 1
+sys.argv = [_prog, "--site", _site_for_import] if _site_for_import else [_prog]
+
+from api_poster import WP_API_URL, _normalize_title_for_duplicate, _wp_title_plain, api_request
+
+sys.argv = _orig_argv
 
 def get_all_future_posts():
     """予約済み投稿を全件取得"""
@@ -39,17 +55,18 @@ def main():
         print("予約投稿はありません。")
         return
 
-    # タイトルでグループ化
-    by_title = {}
+    # 正規化タイトルでグループ化（api_poster / check_article_duplicates と同じ基準）
+    by_key = {}
     for p in posts:
-        title_obj = p.get("title") or {}
-        title = title_obj.get("raw") or title_obj.get("rendered", "").replace("&#8211;", "–")
-        if title not in by_title:
-            by_title[title] = []
-        by_title[title].append(p)
+        k = _normalize_title_for_duplicate(_wp_title_plain(p))
+        if not k:
+            k = f"__empty_{p.get('id', '')}"
+        if k not in by_key:
+            by_key[k] = []
+        by_key[k].append(p)
 
     # 重複を表示
-    duplicates = {t: plist for t, plist in by_title.items() if len(plist) > 1}
+    duplicates = {t: plist for t, plist in by_key.items() if len(plist) > 1}
     if not duplicates:
         print("✅ 重複は見つかりませんでした。")
         print(f"\n予約投稿数: {len(posts)} 件")

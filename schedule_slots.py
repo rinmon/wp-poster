@@ -1,29 +1,26 @@
 """
 WordPress 予約投稿の枠（api_poster / reschedule_posts で共有）。
 
-5:00〜24:00・1時間刻み固定。24:00 は翌暦日 00:00:00 として表現する。
-1日あたり最大20枠（5,6,…,23時の正時＋翌0:00）。
+0:00〜22:00・2時間刻み正時で固定（0,2,4,…,22）。1日あたり最大12枠。
+日付をまたぐ「24:00」枠は置かない（深夜0:00の予約は「翌日0:00」枠を使う）。
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-# 同一暦日内の最初・最後の「時」枠（24:00 は slot_to_datetime の days_after=1 で表す）
-SCHEDULE_FIRST_HOUR = 5
-SCHEDULE_LAST_HOUR_SAME_CALENDAR_DAY = 23
+# 同一暦日: 0,2,4,…,22 時 正時
+SCHEDULE_HOURS_SAME_DAY = tuple(range(0, 24, 2))  # (0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22)
+
+# --hour として解釈可能な整数（上記と同じ）
+SCHEDULE_HOURS_CLI = SCHEDULE_HOURS_SAME_DAY
 
 
 def schedule_slots_for_day():
     """
     1日分の枠を (hour, minute, days_after_day0) で返す。
-    days_after_day0 は day0（その日 0:00）からの日付オフセット。
-    最後の (0, 0, 1) は翌日 0:00 = 当日 24:00 相当の枠。
+    days_after_day0 は day0（その日 0:00）からの日付オフセット（本定義では常に 0 のみ）。
     """
-    slots = []
-    for h in range(SCHEDULE_FIRST_HOUR, SCHEDULE_LAST_HOUR_SAME_CALENDAR_DAY + 1):
-        slots.append((h, 0, 0))
-    slots.append((0, 0, 1))
-    return slots
+    return [(h, 0, 0) for h in SCHEDULE_HOURS_SAME_DAY]
 
 
 def slot_to_datetime(day0: datetime, hour: int, minute: int, days_after_day0: int) -> datetime:
@@ -34,18 +31,18 @@ def slot_to_datetime(day0: datetime, hour: int, minute: int, days_after_day0: in
 
 
 def is_valid_schedule_slot(hour: int, minute: int) -> bool:
-    """--hour / --minute 指定が枠に合致するか。hour=24 は翌 0:00 枠（24:00、分は0のみ）。"""
+    """--hour / --minute 指定が枠に合致するか。0,2,…,22 の正時のみ（分は0）。"""
     if not (0 <= minute <= 59):
         return False
-    if hour == 24:
+    if hour in SCHEDULE_HOURS_SAME_DAY:
         return minute == 0
-    return SCHEDULE_FIRST_HOUR <= hour <= SCHEDULE_LAST_HOUR_SAME_CALENDAR_DAY
+    return False
 
 
 def ceil_to_next_schedule_slot(dt: datetime) -> datetime:
     """
     dt より後の最初の予約枠（厳密に > dt）。
-    当日に該当がなければ翌日の最初の枠（5:00）。
+    当日に該当がなければ翌日の最初の枠（0:00）。
     """
     dt = dt.replace(second=0, microsecond=0)
     day0 = dt.replace(hour=0, minute=0, second=0, microsecond=0)

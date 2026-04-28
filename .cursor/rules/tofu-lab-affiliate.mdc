@@ -1,0 +1,54 @@
+---
+description: CHOTTO記事へのTOFUラボアフィリエイト。既定は data/tofu-lab-affiliate-embed-wp.html（wp:html）テンプレ。依頼例「TOFUラボアフィリエイトを入れて」「アフィリエイトリンクを入れて」。
+alwaysApply: false
+---
+
+# TOFUラボ アフィリエイト挿入（定型）
+
+ユーザーが **TOFUラボ** の紹介・**紹介経路付き登録**の導線を記事に入れたい／アフィリエイトを貼りたい、と依頼したとき（表現例：**「TOFUラボアフィリエイトを入れてほしい」**、**「アフィリエイトリンクを入れて」**、**「RINMON 経由のリンクを入れて」**）は、次の**既定**に従う。他のルール（`article_creation_guidelines.md`、トーン、法務・E-E-A-T）と矛盾する場合はそちらを優先する。
+
+## 既定テンプレート（必須・まずこちら）
+
+- **使うファイル**: リポジトリ **`data/tofu-lab-affiliate-embed-wp.html`**
+- **中身**: Gutenberg 用 **`<!-- wp:html -->` ～ `<!-- /wp:html -->`** 1ブロック。Tailwind CDN・Font Awesome・Noto Sans・グラデCTA・**RINMON** 表記の注釈付き。登録先は `https://community.tofulab.app/?via=manabu`（CTAの `href` も同URL）。
+- **作業手順**:
+  1. 上記HTMLを**コピー**し、挿入先の `.md` に貼る。
+  2. **`to_block_format` 分割対策**: ブロック全体を **`re.sub(r'\n{2,}', '\n', html)`** のようにして**空行2行連続を1行に潰し**、**1つの `wp:html` ブロック**のままにする（`api_poster.py` が段落境界で切らないため）。
+  3. 挿入位置の前後に**空行1つ**（メタ行 `**タグ**` 直前は `<!-- /wp:html -->` のあと**空行**を1行入れてから `**タグ**`）。
+- **文言・数値の更新**が出たら、**まず `data/tofu-lab-affiliate-embed-wp.html` を編集**し、同内容を該当記事に反映する（テンプレを単一の正とする）。
+
+## 登録・紹介URL（既定）
+
+- **紹介経路付き登録URL**（クエリ `via=manabu`）: `https://community.tofulab.app/?via=manabu`
+- 誤ドメイン注意: `tofulab.com` 等に**安易に誘導リンクを置かない**。**`community.tofulab.app` 上の公式導線**を使う。
+
+## 挿入位置
+
+- **冒頭**（タイトル直後）でも**本文末**（`**タグ**` 直前）でも可。依頼に従う。冒頭のときは**本題の最初の画像**が `api_poster` の**先頭画像**となりアイキャッチに使われやすい。末尾のときは**本題のトピック画像**が先頭に来る配置になる（実例: `chotto-2026-04-24-wordpress-5-mistakes.md` は末尾配置）。
+
+## 代替（明示時のみ）
+
+- ユーザーが**プレーンテキスト＋`[IMAGE_BLOCK]`（OGP＋`リンクURL`）**に限定する・**短い1段落だけ**等と**明示**した場合に限り、従来型のマークダウン＋IMAGE_BLOCKを使ってよい。特に指定がなければ **HTMLテンプレを使う**。
+
+## 旧・掲載用コピー（長文・プレーンテキスト世代）
+
+以下は**HTMLテンプレ導入前**の文面アーカイブ。新規依頼では**原則 `data/tofu-lab-affiliate-embed-wp.html` を使い、**プレーンテキスト長文の再掲は**ユーザー指示があるときだけ。
+
+```text
+（旧：絵文字リード＋箇条書き＋参加URL…のブロック。詳細は Git 履歴または processed 内の当該記事を参照）
+```
+
+## 投稿作業
+
+- ドラフト更新後、ユーザーが**投稿予約の停止**を明示しない限り、`.cursor/rules/api-poster.mdc` に従い **`check_article_duplicates.py` → `api_poster.py`（`--update <ID>` 可）** を実行する。
+
+## AdSense をこの枠に出さない（公式のやり方）
+
+- **HTMLだけで100%保証する公式属性はない**（インページ自動広告はページを解析して挿入するため）。**推奨は Google AdSense 側の「除外エリア」**（Excluded areas、インページ自動広告用）。
+- 手順（概要）: [除外エリアを使って、インページ自動広告の特定の掲載箇所を制御する](https://support.google.com/adsense/answer/12626543?hl=ja) — サイトの **広告** → 対象サイトの**編集** → **除外エリア**で、プレビュー上のブロックを除外する。セレクタを使う場合は **`#tofu-lab-affiliate-embed`**（本テンプレ最外囲 `div` の `id`）を指定可能。
+- **枠内に限らない**広告（アンカー/オーバーレイ等）の扱いは、上記ヘルプのとおり。テーマ・Auto ads の種別でも異なる。
+
+## 技術メモ
+
+- 埋め込みに **`<script src="https://cdn.tailwindcss.com">`** 等を含む。WordPress のサニタイズで欠ける場合は、サイト設定・権限の確認。
+- テンプレ最外囲の **`id="tofu-lab-affiliate-embed"`** は、AdSense の除外指定・検証用（上記）。テンプレ差し替え時も維持する。

@@ -10,7 +10,7 @@ import re
 import unicodedata
 import difflib
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 # この値以上で「重複候補」とみなす（調整可）
 DEFAULT_HINT_DUPLICATE_THRESHOLD = float(
@@ -366,13 +366,17 @@ def find_local_hint_duplicate(
     draft_dirs: list[str],
     *,
     threshold: float = DEFAULT_HINT_DUPLICATE_THRESHOLD,
+    site_key: Optional[Callable[[str], str]] = None,
 ) -> Optional[tuple[str, float]]:
     """
     他の .md とヒント重複を検査。戻り値: (相手パス, スコア) または None
+
+    site_key: 指定時は同じキー（投稿先サイト）同士のみ比較。別サイトの同タイトルは重複とみなさない。
     """
     if not _norm_title(hints.title) and not hints.tags and not hints.excerpt:
         return None
     excl = os.path.abspath(exclude_path) if exclude_path else ""
+    my_site = site_key(excl) if (site_key and excl) else None
 
     for folder in draft_dirs:
         if not os.path.isdir(folder):
@@ -383,6 +387,9 @@ def find_local_hint_duplicate(
             bn = os.path.basename(path).upper()
             if bn == "README_DRAFTS.MD" or bn.startswith("."):
                 continue
+            if my_site is not None and site_key is not None:
+                if site_key(path) != my_site:
+                    continue
             try:
                 oth = parse_draft_hints_for_duplicate_scan(path)
             except Exception:
